@@ -31,3 +31,5 @@ All future capture features must:
 When a feature touches audio, screen content, OCR, transcripts, or LLM processing, design it around consent, visible state, and local control first. If a feature would make Local Jarvis harder for a user or meeting participant to notice, inspect, or stop, it does not belong in this project.
 
 Local model setup must remain explicit. Status checks may detect Ollama and local models, but model downloads require user action.
+
+AI processing must remain visible and local. Processing jobs may summarize user-started sessions, but they must not add hidden capture, remote calls, deceptive automation, or monitoring evasion.

@@ -5,6 +5,7 @@
 #include "ai/PromptBuilder.h"
 #include "asr/AsrEngineFactory.h"
 #include "privacy/PrivacyManager.h"
+#include "processing/JsonRepair.h"
 #include "session/SessionManager.h"
 #include "setup/SetupManager.h"
 #include "setup/SystemCheck.h"
@@ -121,6 +122,15 @@ int main()
         return EXIT_FAILURE;
     }
 
+    const auto repairedJson = local_jarvis::processing::JsonRepair::normalizeJsonObject(
+        "```json\n{\"summary\":\"ok\",\"flashcards\":[{\"question\":\"Q\",\"answer\":\"A\"}]}\n```");
+    if (!repairedJson.has_value()
+        || local_jarvis::processing::JsonRepair::extractString(*repairedJson, "summary").value_or("") != "ok"
+        || local_jarvis::processing::JsonRepair::extractObjectArray(*repairedJson, "flashcards").empty()) {
+        std::cerr << "JSON repair helper failed.\n";
+        return EXIT_FAILURE;
+    }
+
     const auto storedSessionId = storage.createSession("study", std::string("Storage smoke session"));
     if (!storedSessionId.has_value()) {
         std::cerr << "Failed to create storage session: " << storage.lastError() << '\n';
@@ -202,6 +212,15 @@ int main()
     }
     if (recentSessions.front().summaryStatus.empty()) {
         std::cerr << "Recent session should include summary status.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (storage.listRecentTranscriptSegments(*storedSessionId, 5).empty()
+        || storage.listRecentScreenOcrSegments(*storedSessionId, 5).empty()
+        || storage.listLatestProcessedNotes(*storedSessionId, 5).empty()
+        || storage.listActionItems(*storedSessionId, 5).empty()
+        || storage.listFlashcards(*storedSessionId, 5).empty()) {
+        std::cerr << "Storage list helpers returned empty results.\n";
         return EXIT_FAILURE;
     }
 

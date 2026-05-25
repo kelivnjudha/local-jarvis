@@ -39,6 +39,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_asrEngine(local_jarvis::asr::createDefaultAsrEngine())
     , m_modelManager(m_ollamaClient, m_systemCheck)
     , m_setupManager(m_storage, m_modelManager, m_ollamaClient)
+    , m_processingQueue(m_storage, m_ollamaClient)
 {
     buildUi();
     initializeStorage();
@@ -106,11 +107,23 @@ void MainWindow::buildUi()
     m_sessionStatusLabel = new QLabel(statusGroup);
     m_captureStatusLabel = new QLabel(statusGroup);
     m_asrStatusLabel = new QLabel(statusGroup);
+    m_aiProcessingStatusLabel = new QLabel(statusGroup);
     m_captureStatusLabel->setWordWrap(true);
     statusLayout->addWidget(m_sessionStatusLabel);
     statusLayout->addWidget(m_captureStatusLabel);
     statusLayout->addWidget(m_asrStatusLabel);
+    statusLayout->addWidget(m_aiProcessingStatusLabel);
     rootLayout->addWidget(statusGroup);
+
+    auto *processingLayout = new QHBoxLayout();
+    m_processStudyButton = new QPushButton("Process Study Chunk", central);
+    m_processMeetingButton = new QPushButton("Process Meeting Chunk", central);
+    m_processFinalSummaryButton = new QPushButton("Final Summary", central);
+    processingLayout->addWidget(m_processStudyButton);
+    processingLayout->addWidget(m_processMeetingButton);
+    processingLayout->addWidget(m_processFinalSummaryButton);
+    processingLayout->addStretch();
+    rootLayout->addLayout(processingLayout);
 
     auto *contentLayout = new QHBoxLayout();
 
@@ -224,6 +237,18 @@ void MainWindow::connectSignals()
         refreshStatus();
     });
 
+    connect(m_processStudyButton, &QPushButton::clicked, this, [this]() {
+        enqueueStudyProcessing();
+    });
+
+    connect(m_processMeetingButton, &QPushButton::clicked, this, [this]() {
+        enqueueMeetingProcessing();
+    });
+
+    connect(m_processFinalSummaryButton, &QPushButton::clicked, this, [this]() {
+        enqueueFinalSummaryProcessing();
+    });
+
     connect(m_setupButton, &QPushButton::clicked, this, [this]() {
         runSetupAsync();
     });
@@ -289,6 +314,13 @@ void MainWindow::ensureSessionManager()
             refreshStatus();
         }, Qt::QueuedConnection);
     });
+    m_processingQueue.setStatusCallback([this](const std::string &message) {
+        QMetaObject::invokeMethod(this, [this, message]() {
+            m_aiProcessingStatusLabel->setText(QString("AI processing: %1").arg(QString::fromStdString(message)));
+            refreshProcessedOutputs();
+            refreshStatus();
+        }, Qt::QueuedConnection);
+    });
 }
 
 void MainWindow::refreshStatus()
@@ -320,9 +352,15 @@ void MainWindow::refreshStatus()
         ? QString::fromStdString(m_asrEngine->engineName())
         : "unavailable";
     m_asrStatusLabel->setText(QString("ASR engine: %1").arg(asrEngineName));
+    if (m_aiProcessingStatusLabel->text().isEmpty()) {
+        m_aiProcessingStatusLabel->setText("AI processing: idle");
+    }
 
     m_startButton->setEnabled(!active && m_sessionManager != nullptr);
     m_stopButton->setEnabled(active);
+    m_processStudyButton->setEnabled(active);
+    m_processMeetingButton->setEnabled(active);
+    m_processFinalSummaryButton->setEnabled(active);
     m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
     m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
 }
@@ -357,6 +395,54 @@ void MainWindow::refreshSettings()
     m_currentModelLabel->setText(QString("Current model: %1").arg(QString::fromStdString(currentModel)));
     if (m_modelNameEdit->text().isEmpty()) {
         m_modelNameEdit->setText(QString::fromStdString(currentModel));
+    }
+}
+
+void MainWindow::refreshProcessedOutputs()
+{
+    if (!m_sessionManager || !m_notesPanel) {
+        return;
+    }
+
+    const auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    QString output;
+    const auto notes = m_storage.listLatestProcessedNotes(*sessionId, 5);
+    if (!notes.empty()) {
+        output += "Processed notes\n";
+        for (const auto &note : notes) {
+            output += QString("[%1] %2\n%3\n\n")
+                .arg(QString::fromStdString(note.type),
+                     QString::fromStdString(note.title.value_or("Untitled")),
+                     QString::fromStdString(note.body));
+        }
+    }
+
+    const auto flashcards = m_storage.listFlashcards(*sessionId, 10);
+    if (!flashcards.empty()) {
+        output += "Flashcards\n";
+        for (const auto &flashcard : flashcards) {
+            output += QString("Q: %1\nA: %2\n\n")
+                .arg(QString::fromStdString(flashcard.question),
+                     QString::fromStdString(flashcard.answer));
+        }
+    }
+
+    const auto actionItems = m_storage.listActionItems(*sessionId, 10);
+    if (!actionItems.empty()) {
+        output += "Action items\n";
+        for (const auto &item : actionItems) {
+            output += QString("[%1] %2\n")
+                .arg(QString::fromStdString(item.status),
+                     QString::fromStdString(item.text));
+        }
+    }
+
+    if (!output.isEmpty()) {
+        m_notesPanel->setPlainText(output.trimmed());
     }
 }
 
@@ -446,4 +532,49 @@ void MainWindow::runPullModelAsync(const QString &modelName)
             m_pullFallbackButton->setEnabled(true);
         }, Qt::QueuedConnection);
     }).detach();
+}
+
+void MainWindow::enqueueStudyProcessing()
+{
+    if (!m_sessionManager) {
+        return;
+    }
+
+    const auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    m_aiProcessingStatusLabel->setText("AI processing: queued study chunk");
+    m_processingQueue.enqueueStudyChunk(*sessionId);
+}
+
+void MainWindow::enqueueMeetingProcessing()
+{
+    if (!m_sessionManager) {
+        return;
+    }
+
+    const auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    m_aiProcessingStatusLabel->setText("AI processing: queued meeting chunk");
+    m_processingQueue.enqueueMeetingChunk(*sessionId);
+}
+
+void MainWindow::enqueueFinalSummaryProcessing()
+{
+    if (!m_sessionManager) {
+        return;
+    }
+
+    const auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    m_aiProcessingStatusLabel->setText("AI processing: queued final summary");
+    m_processingQueue.enqueueFinalSessionSummary(*sessionId);
 }

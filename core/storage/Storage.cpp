@@ -646,6 +646,222 @@ LIMIT ?;
     return sessions;
 }
 
+std::vector<TranscriptSegmentRecord> Storage::listRecentTranscriptSegments(const std::string &sessionId, int limit)
+{
+    std::vector<TranscriptSegmentRecord> segments;
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return segments;
+    }
+
+    constexpr const char *sql = R"sql(
+SELECT id, session_id, start_ms, end_ms, speaker, text, source, created_at
+FROM (
+    SELECT id, session_id, start_ms, end_ms, speaker, text, source, created_at
+    FROM transcript_segments
+    WHERE session_id = ?
+    ORDER BY start_ms DESC
+    LIMIT ?
+)
+ORDER BY start_ms ASC;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare list recent transcript segments statement");
+        return segments;
+    }
+
+    bindText(statement, 1, sessionId);
+    sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        segments.push_back(TranscriptSegmentRecord {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .startMs = sqlite3_column_int64(statement, 2),
+            .endMs = sqlite3_column_int64(statement, 3),
+            .speaker = nullableColumnText(statement, 4),
+            .text = columnText(statement, 5),
+            .source = columnText(statement, 6),
+            .createdAt = columnText(statement, 7)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return segments;
+}
+
+std::vector<ScreenOcrSegmentRecord> Storage::listRecentScreenOcrSegments(const std::string &sessionId, int limit)
+{
+    std::vector<ScreenOcrSegmentRecord> segments;
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return segments;
+    }
+
+    constexpr const char *sql = R"sql(
+SELECT id, session_id, timestamp_ms, window_title, text, created_at
+FROM (
+    SELECT id, session_id, timestamp_ms, window_title, text, created_at
+    FROM screen_ocr_segments
+    WHERE session_id = ?
+    ORDER BY timestamp_ms DESC
+    LIMIT ?
+)
+ORDER BY timestamp_ms ASC;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare list recent screen OCR segments statement");
+        return segments;
+    }
+
+    bindText(statement, 1, sessionId);
+    sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        segments.push_back(ScreenOcrSegmentRecord {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .timestampMs = sqlite3_column_int64(statement, 2),
+            .windowTitle = nullableColumnText(statement, 3),
+            .text = columnText(statement, 4),
+            .createdAt = columnText(statement, 5)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return segments;
+}
+
+std::vector<ProcessedNoteRecord> Storage::listLatestProcessedNotes(const std::string &sessionId, int limit)
+{
+    std::vector<ProcessedNoteRecord> notes;
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return notes;
+    }
+
+    constexpr const char *sql = R"sql(
+SELECT id, session_id, type, title, body, json_body, created_at
+FROM processed_notes
+WHERE session_id = ?
+ORDER BY created_at DESC
+LIMIT ?;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare list processed notes statement");
+        return notes;
+    }
+
+    bindText(statement, 1, sessionId);
+    sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        notes.push_back(ProcessedNoteRecord {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .type = columnText(statement, 2),
+            .title = nullableColumnText(statement, 3),
+            .body = columnText(statement, 4),
+            .jsonBody = nullableColumnText(statement, 5),
+            .createdAt = columnText(statement, 6)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return notes;
+}
+
+std::vector<ActionItemRecord> Storage::listActionItems(const std::string &sessionId, int limit)
+{
+    std::vector<ActionItemRecord> actionItems;
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return actionItems;
+    }
+
+    constexpr const char *sql = R"sql(
+SELECT id, session_id, text, COALESCE(status, 'open'), due_at, created_at
+FROM action_items
+WHERE session_id = ?
+ORDER BY created_at DESC
+LIMIT ?;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare list action items statement");
+        return actionItems;
+    }
+
+    bindText(statement, 1, sessionId);
+    sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        actionItems.push_back(ActionItemRecord {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .text = columnText(statement, 2),
+            .status = columnText(statement, 3),
+            .dueAt = nullableColumnText(statement, 4),
+            .createdAt = columnText(statement, 5)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return actionItems;
+}
+
+std::vector<FlashcardRecord> Storage::listFlashcards(const std::string &sessionId, int limit)
+{
+    std::vector<FlashcardRecord> flashcards;
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return flashcards;
+    }
+
+    constexpr const char *sql = R"sql(
+SELECT id, session_id, question, answer, topic, created_at
+FROM flashcards
+WHERE session_id = ?
+ORDER BY created_at DESC
+LIMIT ?;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare list flashcards statement");
+        return flashcards;
+    }
+
+    bindText(statement, 1, sessionId);
+    sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        flashcards.push_back(FlashcardRecord {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .question = columnText(statement, 2),
+            .answer = columnText(statement, 3),
+            .topic = nullableColumnText(statement, 4),
+            .createdAt = columnText(statement, 5)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return flashcards;
+}
+
 int Storage::countTranscriptSegmentsForSession(const std::string &sessionId)
 {
     if (!isOpen()) {

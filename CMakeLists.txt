@@ -27,6 +27,11 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/ai/OllamaClient.cpp
     core/ai/ModelManager.cpp
     core/ai/PromptBuilder.cpp
+    core/processing/ProcessingJob.cpp
+    core/processing/ProcessingQueue.cpp
+    core/processing/StudyNoteProcessor.cpp
+    core/processing/MeetingNoteProcessor.cpp
+    core/processing/JsonRepair.cpp
     core/setup/SetupManager.cpp
     core/setup/SystemCheck.cpp
     core/audio/AudioCapture.cpp

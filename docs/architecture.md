@@ -6,6 +6,7 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 
 - `apps/desktop`: Qt 6 Widgets application and visible user controls.
 - `core/ai`: Local Ollama client, Gemma model manager, and prompt helpers.
+- `core/processing`: Background local AI processing queue and study/meeting processors.
 - `core/setup`: First-run checks for local database, Ollama, and model readiness.
 - `core/session`: Starts and stops local sessions, emits lifecycle events, and records session IDs.
 - `core/storage`: Owns the SQLite connection, schema creation, and session persistence.
@@ -34,6 +35,8 @@ Local ASR is prepared as an interface only. No cloud ASR or background upload pa
 Ollama integration is local-only and targets `http://localhost:11434`. `OllamaClient` supports `/api/tags`, `/api/generate`, and `/api/chat` with non-streaming responses first.
 
 `ModelManager` recommends `gemma4:e4b` when RAM is at least 16 GB and `gemma4:e2b` otherwise. `ensureModelReady()` checks status only; it does not download models. Model pulls run through explicit user-triggered setup/settings actions.
+
+`ProcessingQueue` runs local AI jobs on a worker thread so the UI stays responsive. Jobs call Ollama locally, save model lifecycle events, and persist generated notes, flashcards, and action items. If the model returns invalid JSON, Local Jarvis stores the raw output with a null `json_body` and logs `json_parse_failed`.
 
 ## Platform Backends
 

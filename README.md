@@ -22,6 +22,7 @@ All future capture features must require explicit user permission and must show 
 - Dummy audio capture backend that generates fake transcript lines only after explicit user permission and session start
 - Optional local ASR interface with `StubAsrEngine` by default and whisper.cpp hooks behind `LOCAL_JARVIS_ENABLE_WHISPER`
 - Local Ollama setup flow for Gemma models at `http://localhost:11434`
+- Background AI processing jobs for local study chunks, meeting chunks, and final summaries
 - First-run setup and settings screens for database/model readiness
 - Privacy manager with microphone, system audio, and screen capture disabled by default
 - Modular C++20 core for future local ASR, OCR, LLM, audio, and screen modules
@@ -85,6 +86,8 @@ See [docs/asr.md](docs/asr.md) for details.
 Local Jarvis prepares Ollama integration for local Gemma models only. It checks the local Ollama API, recommends `gemma4:e4b` on systems with at least 16 GB RAM, and falls back to `gemma4:e2b` on smaller systems.
 
 The app never silently downloads models. Pulls are started only by user action from the setup/settings UI. See [docs/ollama.md](docs/ollama.md).
+
+AI processing jobs run locally through Ollama. Study jobs store `study_chunk` notes and flashcards. Meeting jobs store `meeting_chunk` notes and action items. Invalid model JSON is stored as raw processed-note output and logged as a model event instead of crashing.
 
 ## Local Database
 

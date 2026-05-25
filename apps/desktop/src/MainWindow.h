@@ -15,6 +15,7 @@
 #include "asr/AsrEngine.h"
 #include "audio/DummyAudioCapture.h"
 #include "privacy/PrivacyManager.h"
+#include "processing/ProcessingQueue.h"
 #include "session/SessionManager.h"
 #include "setup/SetupManager.h"
 #include "setup/SystemCheck.h"
@@ -35,11 +36,15 @@ private:
     void refreshStatus();
     void updateSetupStatus(const local_jarvis::setup::SetupStatus &status);
     void refreshSettings();
+    void refreshProcessedOutputs();
     void appendLifecycleEvent(const QString &message);
     void appendSetupLog(const QString &message);
     void appendTranscriptLine(const local_jarvis::audio::TranscriptEvent &event);
     void runSetupAsync();
     void runPullModelAsync(const QString &modelName);
+    void enqueueStudyProcessing();
+    void enqueueMeetingProcessing();
+    void enqueueFinalSummaryProcessing();
 
     QTabWidget *m_tabs = nullptr;
     QPushButton *m_startButton = nullptr;
@@ -49,6 +54,10 @@ private:
     QLabel *m_sessionStatusLabel = nullptr;
     QLabel *m_captureStatusLabel = nullptr;
     QLabel *m_asrStatusLabel = nullptr;
+    QLabel *m_aiProcessingStatusLabel = nullptr;
+    QPushButton *m_processStudyButton = nullptr;
+    QPushButton *m_processMeetingButton = nullptr;
+    QPushButton *m_processFinalSummaryButton = nullptr;
     QTextEdit *m_transcriptPanel = nullptr;
     QTextEdit *m_notesPanel = nullptr;
     QTextEdit *m_eventLogPanel = nullptr;
@@ -74,5 +83,6 @@ private:
     local_jarvis::storage::Storage m_storage;
     local_jarvis::setup::SetupManager m_setupManager;
     local_jarvis::setup::SetupStatus m_setupStatus;
+    local_jarvis::processing::ProcessingQueue m_processingQueue;
     std::unique_ptr<local_jarvis::session::SessionManager> m_sessionManager;
 };

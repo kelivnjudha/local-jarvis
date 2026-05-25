@@ -24,6 +24,8 @@ ASR is local-only. The default stub does not transcribe, upload, or call any net
 
 Ollama integration is also local-only. `OllamaClient` connects to `http://localhost:11434` and does not call cloud AI APIs. Model pulls happen only after a user-triggered setup/settings action.
 
+AI processing jobs use local session transcripts and OCR text already stored in SQLite. They run through local Ollama only and do not upload transcript, OCR, notes, or prompts to a cloud API.
+
 ## Local Data
 
 The desktop app stores session metadata in a local SQLite database under the user's app-data directory:

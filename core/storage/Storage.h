@@ -29,11 +29,31 @@ struct TranscriptSegmentInput {
     std::string source;
 };
 
+struct TranscriptSegmentRecord {
+    std::string id;
+    std::string sessionId;
+    std::int64_t startMs = 0;
+    std::int64_t endMs = 0;
+    std::optional<std::string> speaker;
+    std::string text;
+    std::string source;
+    std::string createdAt;
+};
+
 struct ScreenOcrSegmentInput {
     std::string sessionId;
     std::int64_t timestampMs = 0;
     std::optional<std::string> windowTitle;
     std::string text;
+};
+
+struct ScreenOcrSegmentRecord {
+    std::string id;
+    std::string sessionId;
+    std::int64_t timestampMs = 0;
+    std::optional<std::string> windowTitle;
+    std::string text;
+    std::string createdAt;
 };
 
 struct ProcessedNoteInput {
@@ -44,6 +64,16 @@ struct ProcessedNoteInput {
     std::optional<std::string> jsonBody;
 };
 
+struct ProcessedNoteRecord {
+    std::string id;
+    std::string sessionId;
+    std::string type;
+    std::optional<std::string> title;
+    std::string body;
+    std::optional<std::string> jsonBody;
+    std::string createdAt;
+};
+
 struct ActionItemInput {
     std::string sessionId;
     std::string text;
@@ -51,11 +81,29 @@ struct ActionItemInput {
     std::optional<std::string> dueAt;
 };
 
+struct ActionItemRecord {
+    std::string id;
+    std::string sessionId;
+    std::string text;
+    std::string status;
+    std::optional<std::string> dueAt;
+    std::string createdAt;
+};
+
 struct FlashcardInput {
     std::string sessionId;
     std::string question;
     std::string answer;
     std::optional<std::string> topic;
+};
+
+struct FlashcardRecord {
+    std::string id;
+    std::string sessionId;
+    std::string question;
+    std::string answer;
+    std::optional<std::string> topic;
+    std::string createdAt;
 };
 
 struct PrivacyEventInput {
@@ -102,6 +150,11 @@ public:
     std::optional<std::string> addActionItem(const ActionItemInput &actionItem);
     std::optional<std::string> addFlashcard(const FlashcardInput &flashcard);
     [[nodiscard]] std::vector<SessionRecord> listRecentSessions(int limit = 10);
+    [[nodiscard]] std::vector<TranscriptSegmentRecord> listRecentTranscriptSegments(const std::string &sessionId, int limit = 40);
+    [[nodiscard]] std::vector<ScreenOcrSegmentRecord> listRecentScreenOcrSegments(const std::string &sessionId, int limit = 20);
+    [[nodiscard]] std::vector<ProcessedNoteRecord> listLatestProcessedNotes(const std::string &sessionId, int limit = 10);
+    [[nodiscard]] std::vector<ActionItemRecord> listActionItems(const std::string &sessionId, int limit = 20);
+    [[nodiscard]] std::vector<FlashcardRecord> listFlashcards(const std::string &sessionId, int limit = 20);
     [[nodiscard]] int countTranscriptSegmentsForSession(const std::string &sessionId);
     bool setSetting(const std::string &key, const std::string &value);
     [[nodiscard]] std::optional<std::string> getSetting(const std::string &key);
