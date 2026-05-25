@@ -1,13 +1,14 @@
 #pragma once
 
 #include "AiTypes.h"
+#include "ModelClient.h"
 
 #include <string>
 #include <vector>
 
 namespace local_jarvis::ai {
 
-class OllamaClient {
+class OllamaClient final : public ModelClient {
 public:
     explicit OllamaClient(
         std::string host = kOllamaHost,
@@ -18,10 +19,10 @@ public:
     [[nodiscard]] bool isModelInstalled(const std::string &modelName);
     [[nodiscard]] std::vector<std::string> listLocalModels();
 
-    bool generate(const std::string &modelName, const std::string &prompt, std::string &output);
-    bool chat(const std::string &modelName, const std::vector<ChatMessage> &messages, std::string &output);
+    bool generate(const std::string &modelName, const std::string &prompt, std::string &output) override;
+    bool chat(const std::string &modelName, const std::vector<ChatMessage> &messages, std::string &output) override;
 
-    [[nodiscard]] const std::string &lastError() const;
+    [[nodiscard]] const std::string &lastError() const override;
 
 private:
     struct HttpResponse {

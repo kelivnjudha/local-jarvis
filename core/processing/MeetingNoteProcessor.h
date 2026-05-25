@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ProcessingJob.h"
-#include "ai/OllamaClient.h"
+#include "ai/ModelClient.h"
 #include "storage/Storage.h"
 
 #include <string>
@@ -10,7 +10,7 @@ namespace local_jarvis::processing {
 
 class MeetingNoteProcessor {
 public:
-    MeetingNoteProcessor(storage::Storage &storage, ai::OllamaClient &ollamaClient);
+    MeetingNoteProcessor(storage::Storage &storage, ai::ModelClient &modelClient);
 
     ProcessingResult processChunk(const std::string &sessionId, const std::string &modelName);
 
@@ -20,7 +20,7 @@ private:
     ProcessingResult persistMeetingOutput(const std::string &sessionId, const std::string &modelName, const std::string &rawOutput);
 
     storage::Storage &m_storage;
-    ai::OllamaClient &m_ollamaClient;
+    ai::ModelClient &m_modelClient;
 };
 
 } // namespace local_jarvis::processing

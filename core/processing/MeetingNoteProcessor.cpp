@@ -21,9 +21,9 @@ std::string joinBullets(const std::vector<std::string> &values)
 
 } // namespace
 
-MeetingNoteProcessor::MeetingNoteProcessor(storage::Storage &storage, ai::OllamaClient &ollamaClient)
+MeetingNoteProcessor::MeetingNoteProcessor(storage::Storage &storage, ai::ModelClient &modelClient)
     : m_storage(storage)
-    , m_ollamaClient(ollamaClient)
+    , m_modelClient(modelClient)
 {
 }
 
@@ -35,8 +35,8 @@ ProcessingResult MeetingNoteProcessor::processChunk(const std::string &sessionId
         buildScreenOcrContext(sessionId));
 
     std::string output;
-    if (!m_ollamaClient.generate(modelName, prompt, output)) {
-        return { false, "Ollama meeting chunk generation failed: " + m_ollamaClient.lastError(), {} };
+    if (!m_modelClient.generate(modelName, prompt, output)) {
+        return { false, "Model meeting chunk generation failed: " + m_modelClient.lastError(), {} };
     }
 
     return persistMeetingOutput(sessionId, modelName, output);

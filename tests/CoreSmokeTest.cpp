@@ -204,14 +204,18 @@ int main()
         std::cerr << "Failed to end storage session: " << storage.lastError() << '\n';
         return EXIT_FAILURE;
     }
+    if (!storage.setSessionSummaryStatus(*storedSessionId, "waiting_for_model")) {
+        std::cerr << "Failed to set session summary status: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
 
     const auto recentSessions = storage.listRecentSessions(5);
     if (recentSessions.empty() || recentSessions.front().id.empty()) {
         std::cerr << "Failed to list recent sessions: " << storage.lastError() << '\n';
         return EXIT_FAILURE;
     }
-    if (recentSessions.front().summaryStatus.empty()) {
-        std::cerr << "Recent session should include summary status.\n";
+    if (recentSessions.front().summaryStatus != "waiting_for_model") {
+        std::cerr << "Recent session should include updated summary status.\n";
         return EXIT_FAILURE;
     }
 

@@ -8,7 +8,13 @@
 #include <QTabWidget>
 #include <QTextEdit>
 
+#include <atomic>
+#include <functional>
 #include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
 
 #include "ai/ModelManager.h"
 #include "ai/OllamaClient.h"
@@ -26,7 +32,7 @@ class MainWindow final : public QMainWindow {
 
 public:
     explicit MainWindow(QWidget *parent = nullptr);
-    ~MainWindow() override = default;
+    ~MainWindow() override;
 
 private:
     void buildUi();
@@ -45,6 +51,9 @@ private:
     void enqueueStudyProcessing();
     void enqueueMeetingProcessing();
     void enqueueFinalSummaryProcessing();
+    void postToUi(std::function<void()> callback);
+    void joinFinishedWorkers();
+    void joinWorkerThreads();
 
     QTabWidget *m_tabs = nullptr;
     QPushButton *m_startButton = nullptr;
@@ -85,4 +94,10 @@ private:
     local_jarvis::setup::SetupStatus m_setupStatus;
     local_jarvis::processing::ProcessingQueue m_processingQueue;
     std::unique_ptr<local_jarvis::session::SessionManager> m_sessionManager;
+    std::optional<std::string> m_lastStoppedSessionId;
+    std::thread m_setupThread;
+    std::thread m_modelPullThread;
+    std::atomic_bool m_destroying { false };
+    std::atomic_bool m_setupWorkerActive { false };
+    std::atomic_bool m_modelPullWorkerActive { false };
 };

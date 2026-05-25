@@ -21,9 +21,9 @@ std::string joinBullets(const std::vector<std::string> &values)
 
 } // namespace
 
-StudyNoteProcessor::StudyNoteProcessor(storage::Storage &storage, ai::OllamaClient &ollamaClient)
+StudyNoteProcessor::StudyNoteProcessor(storage::Storage &storage, ai::ModelClient &modelClient)
     : m_storage(storage)
-    , m_ollamaClient(ollamaClient)
+    , m_modelClient(modelClient)
 {
 }
 
@@ -35,8 +35,8 @@ ProcessingResult StudyNoteProcessor::processChunk(const std::string &sessionId, 
         buildScreenOcrContext(sessionId));
 
     std::string output;
-    if (!m_ollamaClient.generate(modelName, prompt, output)) {
-        return { false, "Ollama study chunk generation failed: " + m_ollamaClient.lastError(), {} };
+    if (!m_modelClient.generate(modelName, prompt, output)) {
+        return { false, "Model study chunk generation failed: " + m_modelClient.lastError(), {} };
     }
 
     return persistStudyOutput(sessionId, modelName, "study_chunk", output);
@@ -50,8 +50,8 @@ ProcessingResult StudyNoteProcessor::processFinalSummary(const std::string &sess
         buildScreenOcrContext(sessionId));
 
     std::string output;
-    if (!m_ollamaClient.generate(modelName, prompt, output)) {
-        return { false, "Ollama final summary generation failed: " + m_ollamaClient.lastError(), {} };
+    if (!m_modelClient.generate(modelName, prompt, output)) {
+        return { false, "Model final summary generation failed: " + m_modelClient.lastError(), {} };
     }
 
     return persistStudyOutput(sessionId, modelName, "final_summary", output);

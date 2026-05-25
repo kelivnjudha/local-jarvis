@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ProcessingJob.h"
-#include "ai/OllamaClient.h"
+#include "ai/ModelClient.h"
 #include "storage/Storage.h"
 
 #include <string>
@@ -10,7 +10,7 @@ namespace local_jarvis::processing {
 
 class StudyNoteProcessor {
 public:
-    StudyNoteProcessor(storage::Storage &storage, ai::OllamaClient &ollamaClient);
+    StudyNoteProcessor(storage::Storage &storage, ai::ModelClient &modelClient);
 
     ProcessingResult processChunk(const std::string &sessionId, const std::string &modelName);
     ProcessingResult processFinalSummary(const std::string &sessionId, const std::string &modelName);
@@ -25,7 +25,7 @@ private:
         const std::string &rawOutput);
 
     storage::Storage &m_storage;
-    ai::OllamaClient &m_ollamaClient;
+    ai::ModelClient &m_modelClient;
 };
 
 } // namespace local_jarvis::processing

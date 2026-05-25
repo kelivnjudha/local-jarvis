@@ -1,9 +1,10 @@
 #include "OllamaClient.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -113,137 +114,6 @@ std::string readAll(SocketHandle socket)
     return data;
 }
 
-std::string jsonEscape(const std::string &value)
-{
-    std::ostringstream stream;
-    for (const char character : value) {
-        switch (character) {
-        case '\\':
-            stream << "\\\\";
-            break;
-        case '"':
-            stream << "\\\"";
-            break;
-        case '\n':
-            stream << "\\n";
-            break;
-        case '\r':
-            stream << "\\r";
-            break;
-        case '\t':
-            stream << "\\t";
-            break;
-        default:
-            stream << character;
-            break;
-        }
-    }
-    return stream.str();
-}
-
-std::string jsonUnescape(const std::string &value)
-{
-    std::string output;
-    output.reserve(value.size());
-
-    for (std::size_t index = 0; index < value.size(); ++index) {
-        if (value[index] != '\\' || index + 1 >= value.size()) {
-            output.push_back(value[index]);
-            continue;
-        }
-
-        const char escaped = value[++index];
-        switch (escaped) {
-        case 'n':
-            output.push_back('\n');
-            break;
-        case 'r':
-            output.push_back('\r');
-            break;
-        case 't':
-            output.push_back('\t');
-            break;
-        case '"':
-        case '\\':
-        case '/':
-            output.push_back(escaped);
-            break;
-        default:
-            output.push_back(escaped);
-            break;
-        }
-    }
-
-    return output;
-}
-
-std::optional<std::string> extractJsonString(const std::string &json, const std::string &key, std::size_t startAt = 0)
-{
-    const std::string needle = "\"" + key + "\"";
-    const std::size_t keyIndex = json.find(needle, startAt);
-    if (keyIndex == std::string::npos) {
-        return std::nullopt;
-    }
-
-    const std::size_t colonIndex = json.find(':', keyIndex + needle.size());
-    if (colonIndex == std::string::npos) {
-        return std::nullopt;
-    }
-
-    std::size_t quoteIndex = json.find('"', colonIndex + 1);
-    if (quoteIndex == std::string::npos) {
-        return std::nullopt;
-    }
-
-    std::string value;
-    bool escaped = false;
-    for (std::size_t index = quoteIndex + 1; index < json.size(); ++index) {
-        const char character = json[index];
-        if (escaped) {
-            value.push_back('\\');
-            value.push_back(character);
-            escaped = false;
-            continue;
-        }
-
-        if (character == '\\') {
-            escaped = true;
-            continue;
-        }
-
-        if (character == '"') {
-            return jsonUnescape(value);
-        }
-
-        value.push_back(character);
-    }
-
-    return std::nullopt;
-}
-
-std::vector<std::string> extractAllJsonStrings(const std::string &json, const std::string &key)
-{
-    std::vector<std::string> values;
-    std::size_t offset = 0;
-    const std::string needle = "\"" + key + "\"";
-
-    while (true) {
-        const std::size_t keyIndex = json.find(needle, offset);
-        if (keyIndex == std::string::npos) {
-            break;
-        }
-
-        const auto value = extractJsonString(json, key, keyIndex);
-        if (value.has_value()) {
-            values.push_back(*value);
-        }
-
-        offset = keyIndex + needle.size();
-    }
-
-    return values;
-}
-
 std::string decodeChunkedBody(const std::string &body)
 {
     std::string decoded;
@@ -256,7 +126,12 @@ std::string decodeChunkedBody(const std::string &body)
         }
 
         const std::string sizeText = body.substr(offset, lineEnd - offset);
-        const std::size_t chunkSize = std::stoul(sizeText, nullptr, 16);
+        std::size_t chunkSize = 0;
+        try {
+            chunkSize = std::stoul(sizeText, nullptr, 16);
+        } catch (...) {
+            break;
+        }
         if (chunkSize == 0) {
             break;
         }
@@ -332,18 +207,33 @@ std::vector<std::string> OllamaClient::listLocalModels()
         return {};
     }
 
+    const auto json = nlohmann::json::parse(response.body, nullptr, false);
+    if (json.is_discarded() || !json.is_object() || !json.contains("models") || !json["models"].is_array()) {
+        setLastError("Ollama tags response was not valid JSON.");
+        return {};
+    }
+
+    std::vector<std::string> models;
+    for (const auto &model : json["models"]) {
+        if (model.is_object() && model.contains("name") && model["name"].is_string()) {
+            models.push_back(model["name"].get<std::string>());
+        }
+    }
+
     m_lastError.clear();
-    return extractAllJsonStrings(response.body, "name");
+    return models;
 }
 
 bool OllamaClient::generate(const std::string &modelName, const std::string &prompt, std::string &output)
 {
-    const std::string body = "{\"model\":\"" + jsonEscape(modelName)
-        + "\",\"prompt\":\"" + jsonEscape(prompt)
-        + "\",\"stream\":false}";
+    const nlohmann::json requestBody = {
+        { "model", modelName },
+        { "prompt", prompt },
+        { "stream", false }
+    };
 
     HttpResponse response;
-    if (!request("POST", "/api/generate", body, response)) {
+    if (!request("POST", "/api/generate", requestBody.dump(), response)) {
         return false;
     }
 
@@ -352,32 +242,38 @@ bool OllamaClient::generate(const std::string &modelName, const std::string &pro
         return false;
     }
 
-    const auto text = extractJsonString(response.body, "response");
-    if (!text.has_value()) {
+    const auto json = nlohmann::json::parse(response.body, nullptr, false);
+    if (json.is_discarded()
+        || !json.is_object()
+        || !json.contains("response")
+        || !json["response"].is_string()) {
         setLastError("Generate response did not include a response field.");
         return false;
     }
 
-    output = trim(*text);
+    output = trim(json["response"].get<std::string>());
     m_lastError.clear();
     return true;
 }
 
 bool OllamaClient::chat(const std::string &modelName, const std::vector<ChatMessage> &messages, std::string &output)
 {
-    std::ostringstream body;
-    body << "{\"model\":\"" << jsonEscape(modelName) << "\",\"messages\":[";
-    for (std::size_t index = 0; index < messages.size(); ++index) {
-        if (index > 0) {
-            body << ',';
-        }
-        body << "{\"role\":\"" << jsonEscape(messages[index].role)
-             << "\",\"content\":\"" << jsonEscape(messages[index].content) << "\"}";
+    nlohmann::json messageArray = nlohmann::json::array();
+    for (const auto &message : messages) {
+        messageArray.push_back({
+            { "role", message.role },
+            { "content", message.content }
+        });
     }
-    body << "],\"stream\":false}";
+
+    const nlohmann::json requestBody = {
+        { "model", modelName },
+        { "messages", messageArray },
+        { "stream", false }
+    };
 
     HttpResponse response;
-    if (!request("POST", "/api/chat", body.str(), response)) {
+    if (!request("POST", "/api/chat", requestBody.dump(), response)) {
         return false;
     }
 
@@ -386,13 +282,18 @@ bool OllamaClient::chat(const std::string &modelName, const std::vector<ChatMess
         return false;
     }
 
-    const auto content = extractJsonString(response.body, "content");
-    if (!content.has_value()) {
+    const auto json = nlohmann::json::parse(response.body, nullptr, false);
+    if (json.is_discarded()
+        || !json.is_object()
+        || !json.contains("message")
+        || !json["message"].is_object()
+        || !json["message"].contains("content")
+        || !json["message"]["content"].is_string()) {
         setLastError("Chat response did not include assistant content.");
         return false;
     }
 
-    output = trim(*content);
+    output = trim(json["message"]["content"].get<std::string>());
     m_lastError.clear();
     return true;
 }

@@ -21,6 +21,7 @@ set(LOCAL_JARVIS_WHISPER_SOURCE_DIR
 )
 
 find_package(SQLite3 REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 set(LOCAL_JARVIS_CORE_SOURCES
     core/session/SessionManager.cpp
@@ -91,6 +92,7 @@ target_include_directories(local_jarvis_core
 target_link_libraries(local_jarvis_core
     PUBLIC
         SQLite::SQLite3
+        nlohmann_json::nlohmann_json
 )
 
 if(WIN32)

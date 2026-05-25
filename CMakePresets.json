@@ -1,0 +1,85 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 22,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-msvc-core-debug",
+      "displayName": "Windows MSVC Core Debug",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "LOCAL_JARVIS_BUILD_DESKTOP": "OFF",
+        "LOCAL_JARVIS_BUILD_TESTS": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-msvc-core-release",
+      "displayName": "Windows MSVC Core Release",
+      "inherits": "windows-msvc-core-debug",
+      "binaryDir": "${sourceDir}/out/build/${presetName}"
+    },
+    {
+      "name": "windows-msvc-desktop-debug",
+      "displayName": "Windows MSVC Desktop Debug (Qt 6)",
+      "inherits": "windows-msvc-core-debug",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_PREFIX_PATH": "$env{LOCAL_JARVIS_QT_PREFIX}",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "LOCAL_JARVIS_BUILD_DESKTOP": "ON",
+        "LOCAL_JARVIS_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-msvc-core-debug",
+      "configurePreset": "windows-msvc-core-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-msvc-core-release",
+      "configurePreset": "windows-msvc-core-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-msvc-desktop-debug",
+      "configurePreset": "windows-msvc-desktop-debug",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-msvc-core-debug",
+      "configurePreset": "windows-msvc-core-debug",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-msvc-core-release",
+      "configurePreset": "windows-msvc-core-release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

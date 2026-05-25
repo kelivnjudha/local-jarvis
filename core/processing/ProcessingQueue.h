@@ -3,7 +3,7 @@
 #include "MeetingNoteProcessor.h"
 #include "ProcessingJob.h"
 #include "StudyNoteProcessor.h"
-#include "ai/OllamaClient.h"
+#include "ai/ModelClient.h"
 #include "storage/Storage.h"
 
 #include <condition_variable>
@@ -19,7 +19,7 @@ class ProcessingQueue {
 public:
     using StatusCallback = std::function<void(const std::string &)>;
 
-    ProcessingQueue(storage::Storage &storage, ai::OllamaClient &ollamaClient);
+    ProcessingQueue(storage::Storage &storage, ai::ModelClient &modelClient);
     ~ProcessingQueue();
 
     ProcessingQueue(const ProcessingQueue &) = delete;
@@ -43,7 +43,7 @@ private:
     void emitStatus(const std::string &message);
 
     storage::Storage &m_storage;
-    ai::OllamaClient &m_ollamaClient;
+    ai::ModelClient &m_modelClient;
     StudyNoteProcessor m_studyProcessor;
     MeetingNoteProcessor m_meetingProcessor;
 

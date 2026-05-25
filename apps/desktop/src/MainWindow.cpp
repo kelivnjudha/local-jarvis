@@ -13,7 +13,7 @@
 
 #include <filesystem>
 #include <string>
-#include <thread>
+#include <utility>
 
 namespace {
 
@@ -45,6 +45,14 @@ MainWindow::MainWindow(QWidget *parent)
     initializeStorage();
     connectSignals();
     refreshStatus();
+}
+
+MainWindow::~MainWindow()
+{
+    m_destroying.store(true);
+    m_processingQueue.setStatusCallback(nullptr);
+    m_sessionManager.reset();
+    joinWorkerThreads();
 }
 
 void MainWindow::buildUi()
@@ -204,6 +212,7 @@ void MainWindow::connectSignals()
             return;
         }
 
+        m_lastStoppedSessionId.reset();
         refreshStatus();
     });
 
@@ -216,6 +225,14 @@ void MainWindow::connectSignals()
         if (!result.ok) {
             QMessageBox::warning(this, "Session Not Stopped", QString::fromStdString(result.message));
             return;
+        }
+
+        if (result.session.has_value()) {
+            m_lastStoppedSessionId = result.session->id;
+            if (!m_setupStatus.modelReady) {
+                m_storage.setSessionSummaryStatus(result.session->id, "waiting_for_model");
+                appendLifecycleEvent("Final summary waiting for local model readiness.");
+            }
         }
 
         refreshStatus();
@@ -309,17 +326,17 @@ void MainWindow::ensureSessionManager()
         appendLifecycleEvent(QString::fromStdString(message));
     });
     m_sessionManager->setTranscriptCallback([this](const local_jarvis::audio::TranscriptEvent &event) {
-        QMetaObject::invokeMethod(this, [this, event]() {
+        postToUi([this, event]() {
             appendTranscriptLine(event);
             refreshStatus();
-        }, Qt::QueuedConnection);
+        });
     });
     m_processingQueue.setStatusCallback([this](const std::string &message) {
-        QMetaObject::invokeMethod(this, [this, message]() {
+        postToUi([this, message]() {
             m_aiProcessingStatusLabel->setText(QString("AI processing: %1").arg(QString::fromStdString(message)));
             refreshProcessedOutputs();
             refreshStatus();
-        }, Qt::QueuedConnection);
+        });
     });
 }
 
@@ -358,9 +375,10 @@ void MainWindow::refreshStatus()
 
     m_startButton->setEnabled(!active && m_sessionManager != nullptr);
     m_stopButton->setEnabled(active);
-    m_processStudyButton->setEnabled(active);
-    m_processMeetingButton->setEnabled(active);
-    m_processFinalSummaryButton->setEnabled(active);
+    const bool modelReady = m_setupStatus.modelReady;
+    m_processStudyButton->setEnabled(active && modelReady);
+    m_processMeetingButton->setEnabled(active && modelReady);
+    m_processFinalSummaryButton->setEnabled(modelReady && (active || m_lastStoppedSessionId.has_value()));
     m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
     m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
 }
@@ -375,10 +393,10 @@ void MainWindow::updateSetupStatus(const local_jarvis::setup::SetupStatus &statu
         .arg(status.modelReady ? "ready" : "missing",
              QString::fromStdString(status.currentModel.empty() ? status.recommendedModel : status.currentModel)));
 
-    const bool ready = status.databaseReady && status.modelReady;
-    m_setupContinueButton->setEnabled(ready);
+    const bool databaseReady = status.databaseReady;
+    m_setupContinueButton->setEnabled(databaseReady);
     if (m_tabs) {
-        m_tabs->setTabEnabled(1, ready);
+        m_tabs->setTabEnabled(1, databaseReady);
     }
 
     if (!status.message.empty()) {
@@ -404,7 +422,10 @@ void MainWindow::refreshProcessedOutputs()
         return;
     }
 
-    const auto sessionId = m_sessionManager->currentSessionId();
+    auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        sessionId = m_lastStoppedSessionId;
+    }
     if (!sessionId.has_value()) {
         return;
     }
@@ -483,37 +504,50 @@ void MainWindow::appendTranscriptLine(const local_jarvis::audio::TranscriptEvent
 
 void MainWindow::runSetupAsync()
 {
+    joinFinishedWorkers();
+    if (m_setupWorkerActive.exchange(true)) {
+        appendSetupLog("Local AI setup is already running.");
+        return;
+    }
+
     m_setupButton->setEnabled(false);
     appendSetupLog("Starting user-triggered local AI setup.");
 
-    std::thread([this]() {
+    m_setupThread = std::thread([this]() {
         auto status = m_setupManager.setupLocalAi([this](const std::string &line) {
-            QMetaObject::invokeMethod(this, [this, line]() {
+            postToUi([this, line]() {
                 appendSetupLog(QString::fromStdString(line));
-            }, Qt::QueuedConnection);
+            });
         });
 
-        QMetaObject::invokeMethod(this, [this, status]() {
+        m_setupWorkerActive.store(false);
+        postToUi([this, status]() {
             m_setupStatus = status;
             updateSetupStatus(m_setupStatus);
             ensureSessionManager();
             refreshSettings();
             refreshStatus();
             m_setupButton->setEnabled(true);
-        }, Qt::QueuedConnection);
-    }).detach();
+        });
+    });
 }
 
 void MainWindow::runPullModelAsync(const QString &modelName)
 {
+    joinFinishedWorkers();
+    if (m_modelPullWorkerActive.exchange(true)) {
+        appendSetupLog("Model pull is already running.");
+        return;
+    }
+
     m_pullFallbackButton->setEnabled(false);
     appendSetupLog(QString("Starting user-triggered model pull: %1").arg(modelName));
 
-    std::thread([this, model = modelName.toStdString()]() {
+    m_modelPullThread = std::thread([this, model = modelName.toStdString()]() {
         const bool ok = m_modelManager.pullModel(model, [this](const std::string &line) {
-            QMetaObject::invokeMethod(this, [this, line]() {
+            postToUi([this, line]() {
                 appendSetupLog(QString::fromStdString(line));
-            }, Qt::QueuedConnection);
+            });
         });
 
         if (ok) {
@@ -524,14 +558,15 @@ void MainWindow::runPullModelAsync(const QString &modelName)
         }
 
         auto status = m_setupManager.firstRunCheck();
-        QMetaObject::invokeMethod(this, [this, status]() {
+        m_modelPullWorkerActive.store(false);
+        postToUi([this, status]() {
             m_setupStatus = status;
             updateSetupStatus(m_setupStatus);
             refreshSettings();
             refreshStatus();
             m_pullFallbackButton->setEnabled(true);
-        }, Qt::QueuedConnection);
-    }).detach();
+        });
+    });
 }
 
 void MainWindow::enqueueStudyProcessing()
@@ -570,11 +605,54 @@ void MainWindow::enqueueFinalSummaryProcessing()
         return;
     }
 
-    const auto sessionId = m_sessionManager->currentSessionId();
+    auto sessionId = m_sessionManager->currentSessionId();
     if (!sessionId.has_value()) {
+        sessionId = m_lastStoppedSessionId;
+    }
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    if (!m_setupStatus.modelReady) {
+        m_storage.setSessionSummaryStatus(*sessionId, "waiting_for_model");
+        m_aiProcessingStatusLabel->setText("AI processing: waiting for local model");
         return;
     }
 
     m_aiProcessingStatusLabel->setText("AI processing: queued final summary");
     m_processingQueue.enqueueFinalSessionSummary(*sessionId);
+}
+
+void MainWindow::postToUi(std::function<void()> callback)
+{
+    if (m_destroying.load()) {
+        return;
+    }
+
+    QMetaObject::invokeMethod(this, [this, callback = std::move(callback)]() mutable {
+        if (m_destroying.load()) {
+            return;
+        }
+        callback();
+    }, Qt::QueuedConnection);
+}
+
+void MainWindow::joinFinishedWorkers()
+{
+    if (!m_setupWorkerActive.load() && m_setupThread.joinable()) {
+        m_setupThread.join();
+    }
+    if (!m_modelPullWorkerActive.load() && m_modelPullThread.joinable()) {
+        m_modelPullThread.join();
+    }
+}
+
+void MainWindow::joinWorkerThreads()
+{
+    if (m_setupThread.joinable()) {
+        m_setupThread.join();
+    }
+    if (m_modelPullThread.joinable()) {
+        m_modelPullThread.join();
+    }
 }

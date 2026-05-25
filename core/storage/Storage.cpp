@@ -254,11 +254,13 @@ std::filesystem::path Storage::defaultDatabasePath()
 
 bool Storage::initialize()
 {
+    std::lock_guard lock(m_mutex);
     return initialize(defaultDatabasePath());
 }
 
 bool Storage::initialize(const std::filesystem::path &databasePath)
 {
+    std::lock_guard lock(m_mutex);
     if (!open(databasePath)) {
         return false;
     }
@@ -268,11 +270,13 @@ bool Storage::initialize(const std::filesystem::path &databasePath)
 
 bool Storage::open()
 {
+    std::lock_guard lock(m_mutex);
     return open(defaultDatabasePath());
 }
 
 bool Storage::open(const std::filesystem::path &databasePath)
 {
+    std::lock_guard lock(m_mutex);
     close();
 
     if (databasePath.has_parent_path()) {
@@ -307,6 +311,7 @@ bool Storage::open(const std::filesystem::path &databasePath)
 
 void Storage::close()
 {
+    std::lock_guard lock(m_mutex);
     if (m_database != nullptr) {
         sqlite3_close(m_database);
         m_database = nullptr;
@@ -316,11 +321,13 @@ void Storage::close()
 
 bool Storage::createSchema()
 {
+    std::lock_guard lock(m_mutex);
     return runMigrations();
 }
 
 bool Storage::initializeSchema()
 {
+    std::lock_guard lock(m_mutex);
     return runMigrations();
 }
 
@@ -328,6 +335,7 @@ std::optional<std::string> Storage::createSession(
     const std::string &mode,
     const std::optional<std::string> &title)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -364,6 +372,7 @@ VALUES (?, ?, ?, ?, 'pending');
 
 bool Storage::endSession(const std::string &sessionId)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return false;
@@ -391,8 +400,39 @@ bool Storage::endSession(const std::string &sessionId)
     return ok;
 }
 
+bool Storage::setSessionSummaryStatus(const std::string &sessionId, const std::string &summaryStatus)
+{
+    std::lock_guard lock(m_mutex);
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return false;
+    }
+
+    constexpr const char *sql = "UPDATE sessions SET summary_status = ? WHERE id = ?;";
+    sqlite3_stmt *statement = nullptr;
+
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare update session summary status statement");
+        return false;
+    }
+
+    bindText(statement, 1, summaryStatus.empty() ? "pending" : summaryStatus);
+    bindText(statement, 2, sessionId);
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+
+    if (ok && sqlite3_changes(m_database) == 0) {
+        m_lastError = "No session row matched id " + sessionId;
+        return false;
+    }
+
+    return ok;
+}
+
 std::optional<std::string> Storage::addTranscriptSegment(const TranscriptSegmentInput &segment)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -443,6 +483,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 
 std::optional<std::string> Storage::addScreenOcrSegment(const ScreenOcrSegmentInput &segment)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -478,6 +519,7 @@ VALUES (?, ?, ?, ?, ?, ?);
 
 std::optional<std::string> Storage::addProcessedNote(const ProcessedNoteInput &note)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -528,6 +570,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
 
 std::optional<std::string> Storage::addActionItem(const ActionItemInput &actionItem)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -563,6 +606,7 @@ VALUES (?, ?, ?, ?, ?, ?);
 
 std::optional<std::string> Storage::addFlashcard(const FlashcardInput &flashcard)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -598,6 +642,7 @@ VALUES (?, ?, ?, ?, ?, ?);
 
 std::vector<SessionRecord> Storage::listRecentSessions(int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<SessionRecord> sessions;
 
     if (!isOpen()) {
@@ -648,6 +693,7 @@ LIMIT ?;
 
 std::vector<TranscriptSegmentRecord> Storage::listRecentTranscriptSegments(const std::string &sessionId, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<TranscriptSegmentRecord> segments;
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -695,6 +741,7 @@ ORDER BY start_ms ASC;
 
 std::vector<ScreenOcrSegmentRecord> Storage::listRecentScreenOcrSegments(const std::string &sessionId, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<ScreenOcrSegmentRecord> segments;
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -740,6 +787,7 @@ ORDER BY timestamp_ms ASC;
 
 std::vector<ProcessedNoteRecord> Storage::listLatestProcessedNotes(const std::string &sessionId, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<ProcessedNoteRecord> notes;
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -782,6 +830,7 @@ LIMIT ?;
 
 std::vector<ActionItemRecord> Storage::listActionItems(const std::string &sessionId, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<ActionItemRecord> actionItems;
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -823,6 +872,7 @@ LIMIT ?;
 
 std::vector<FlashcardRecord> Storage::listFlashcards(const std::string &sessionId, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<FlashcardRecord> flashcards;
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -864,6 +914,7 @@ LIMIT ?;
 
 int Storage::countTranscriptSegmentsForSession(const std::string &sessionId)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return -1;
@@ -893,6 +944,7 @@ int Storage::countTranscriptSegmentsForSession(const std::string &sessionId)
 
 bool Storage::setSetting(const std::string &key, const std::string &value)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return false;
@@ -923,6 +975,7 @@ ON CONFLICT(key) DO UPDATE SET
 
 std::optional<std::string> Storage::getSetting(const std::string &key)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -957,6 +1010,7 @@ std::optional<std::string> Storage::addModelEvent(
     const std::optional<std::string> &modelName,
     const std::optional<std::string> &details)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -991,6 +1045,7 @@ VALUES (?, ?, ?, ?, ?);
 
 std::optional<std::string> Storage::addPrivacyEvent(const PrivacyEventInput &event)
 {
+    std::lock_guard lock(m_mutex);
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
@@ -1025,6 +1080,7 @@ VALUES (?, ?, ?, ?, ?);
 
 std::vector<SearchResult> Storage::searchTranscripts(const std::string &query, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<SearchResult> results;
     if (!isOpen() || query.empty()) {
         return results;
@@ -1077,6 +1133,7 @@ LIMIT ?;
 
 std::vector<SearchResult> Storage::searchProcessedNotes(const std::string &query, int limit)
 {
+    std::lock_guard lock(m_mutex);
     std::vector<SearchResult> results;
     if (!isOpen() || query.empty()) {
         return results;
@@ -1131,11 +1188,13 @@ LIMIT ?;
 
 bool Storage::isOpen() const
 {
+    std::lock_guard lock(m_mutex);
     return m_database != nullptr;
 }
 
-const std::string &Storage::lastError() const
+std::string Storage::lastError() const
 {
+    std::lock_guard lock(m_mutex);
     return m_lastError;
 }
 

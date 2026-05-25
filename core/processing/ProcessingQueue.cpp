@@ -6,11 +6,11 @@
 
 namespace local_jarvis::processing {
 
-ProcessingQueue::ProcessingQueue(storage::Storage &storage, ai::OllamaClient &ollamaClient)
+ProcessingQueue::ProcessingQueue(storage::Storage &storage, ai::ModelClient &modelClient)
     : m_storage(storage)
-    , m_ollamaClient(ollamaClient)
-    , m_studyProcessor(storage, ollamaClient)
-    , m_meetingProcessor(storage, ollamaClient)
+    , m_modelClient(modelClient)
+    , m_studyProcessor(storage, modelClient)
+    , m_meetingProcessor(storage, modelClient)
 {
 }
 
@@ -116,6 +116,9 @@ void ProcessingQueue::runJob(const ProcessingJob &job)
     const std::string startMessage = "AI processing job started: " + job.typeName();
     emitStatus(startMessage);
     m_storage.addModelEvent("processing_job_started", modelName, startMessage + " session=" + job.sessionId);
+    if (job.type == ProcessingJobType::FinalSessionSummary) {
+        m_storage.setSessionSummaryStatus(job.sessionId, "processing");
+    }
 
     ProcessingResult result;
     switch (job.type) {
@@ -133,12 +136,18 @@ void ProcessingQueue::runJob(const ProcessingJob &job)
     if (result.ok) {
         const std::string completed = "AI processing job completed: " + job.typeName();
         m_storage.addModelEvent("processing_job_completed", modelName, completed + " session=" + job.sessionId);
+        if (job.type == ProcessingJobType::FinalSessionSummary) {
+            m_storage.setSessionSummaryStatus(job.sessionId, "complete");
+        }
         emitStatus(completed);
         return;
     }
 
     const std::string failed = "AI processing job failed: " + job.typeName() + " - " + result.message;
     m_storage.addModelEvent("processing_job_failed", modelName, failed + " session=" + job.sessionId);
+    if (job.type == ProcessingJobType::FinalSessionSummary) {
+        m_storage.setSessionSummaryStatus(job.sessionId, "failed");
+    }
     emitStatus(failed);
 }
 

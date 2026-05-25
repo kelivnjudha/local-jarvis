@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -144,6 +145,7 @@ public:
         const std::string &mode,
         const std::optional<std::string> &title = std::nullopt);
     bool endSession(const std::string &sessionId);
+    bool setSessionSummaryStatus(const std::string &sessionId, const std::string &summaryStatus);
     std::optional<std::string> addTranscriptSegment(const TranscriptSegmentInput &segment);
     std::optional<std::string> addScreenOcrSegment(const ScreenOcrSegmentInput &segment);
     std::optional<std::string> addProcessedNote(const ProcessedNoteInput &note);
@@ -167,7 +169,7 @@ public:
     [[nodiscard]] std::vector<SearchResult> searchProcessedNotes(const std::string &query, int limit = 20);
 
     [[nodiscard]] bool isOpen() const;
-    [[nodiscard]] const std::string &lastError() const;
+    [[nodiscard]] std::string lastError() const;
 
 private:
     bool runMigrations();
@@ -181,6 +183,10 @@ private:
     bool bindAndStep(sqlite3_stmt *statement);
     void setLastSqliteError(const std::string &prefix);
 
+    // Storage serializes every public operation with one mutex. SQLite is also
+    // opened with SQLITE_OPEN_FULLMUTEX, but this lock protects the shared
+    // connection handle plus Storage-owned state such as m_lastError.
+    mutable std::recursive_mutex m_mutex;
     sqlite3 *m_database = nullptr;
     bool m_ftsAvailable = false;
     std::string m_lastError;
