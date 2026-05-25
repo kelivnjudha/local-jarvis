@@ -17,6 +17,7 @@ struct SessionRecord {
     std::string startedAt;
     std::optional<std::string> endedAt;
     std::optional<std::string> title;
+    std::string summaryStatus;
 };
 
 struct TranscriptSegmentInput {
@@ -28,11 +29,46 @@ struct TranscriptSegmentInput {
     std::string source;
 };
 
+struct ScreenOcrSegmentInput {
+    std::string sessionId;
+    std::int64_t timestampMs = 0;
+    std::optional<std::string> windowTitle;
+    std::string text;
+};
+
 struct ProcessedNoteInput {
     std::string sessionId;
     std::string type;
-    std::string title;
+    std::optional<std::string> title;
     std::string body;
+    std::optional<std::string> jsonBody;
+};
+
+struct ActionItemInput {
+    std::string sessionId;
+    std::string text;
+    std::string status = "open";
+    std::optional<std::string> dueAt;
+};
+
+struct FlashcardInput {
+    std::string sessionId;
+    std::string question;
+    std::string answer;
+    std::optional<std::string> topic;
+};
+
+struct PrivacyEventInput {
+    std::optional<std::string> sessionId;
+    std::string eventType;
+    std::string details;
+};
+
+struct SearchResult {
+    std::string id;
+    std::string sessionId;
+    std::string text;
+    double rank = 0.0;
 };
 
 class Storage {
@@ -47,6 +83,8 @@ public:
 
     [[nodiscard]] static std::filesystem::path defaultDatabasePath();
 
+    bool initialize();
+    bool initialize(const std::filesystem::path &databasePath);
     bool open();
     bool open(const std::filesystem::path &databasePath);
     void close();
@@ -54,22 +92,44 @@ public:
     bool createSchema();
     bool initializeSchema();
 
-    std::optional<std::string> createSession(const std::string &mode);
+    std::optional<std::string> createSession(
+        const std::string &mode,
+        const std::optional<std::string> &title = std::nullopt);
     bool endSession(const std::string &sessionId);
     std::optional<std::string> addTranscriptSegment(const TranscriptSegmentInput &segment);
+    std::optional<std::string> addScreenOcrSegment(const ScreenOcrSegmentInput &segment);
     std::optional<std::string> addProcessedNote(const ProcessedNoteInput &note);
+    std::optional<std::string> addActionItem(const ActionItemInput &actionItem);
+    std::optional<std::string> addFlashcard(const FlashcardInput &flashcard);
     [[nodiscard]] std::vector<SessionRecord> listRecentSessions(int limit = 10);
     [[nodiscard]] int countTranscriptSegmentsForSession(const std::string &sessionId);
+    bool setSetting(const std::string &key, const std::string &value);
+    [[nodiscard]] std::optional<std::string> getSetting(const std::string &key);
+    std::optional<std::string> addModelEvent(
+        const std::string &eventType,
+        const std::optional<std::string> &modelName,
+        const std::optional<std::string> &details);
+    std::optional<std::string> addPrivacyEvent(const PrivacyEventInput &event);
+    [[nodiscard]] std::vector<SearchResult> searchTranscripts(const std::string &query, int limit = 20);
+    [[nodiscard]] std::vector<SearchResult> searchProcessedNotes(const std::string &query, int limit = 20);
 
     [[nodiscard]] bool isOpen() const;
     [[nodiscard]] const std::string &lastError() const;
 
 private:
+    bool runMigrations();
+    bool ensureCoreSchema();
+    bool ensureFtsTables();
+    bool isFts5Available();
+    bool addColumnIfMissing(const std::string &tableName, const std::string &columnName, const std::string &columnDefinition);
+    [[nodiscard]] bool columnExists(const std::string &tableName, const std::string &columnName);
     bool execute(const char *sql);
+    bool execute(const std::string &sql);
     bool bindAndStep(sqlite3_stmt *statement);
     void setLastSqliteError(const std::string &prefix);
 
     sqlite3 *m_database = nullptr;
+    bool m_ftsAvailable = false;
     std::string m_lastError;
 };
 

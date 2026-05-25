@@ -13,6 +13,8 @@ The project must not implement:
 - Hidden overlays
 - Deceptive automation
 - Features that hide the app from OBS, Zoom, screen sharing, recording, or monitoring tools
+- Cloud ASR, background upload, or background transcription without an active user-started session
+- Cloud AI calls or remote model providers
 
 ## Required Behavior
 
@@ -27,3 +29,5 @@ All future capture features must:
 ## Engineering Rule
 
 When a feature touches audio, screen content, OCR, transcripts, or LLM processing, design it around consent, visible state, and local control first. If a feature would make Local Jarvis harder for a user or meeting participant to notice, inspect, or stop, it does not belong in this project.
+
+Local model setup must remain explicit. Status checks may detect Ollama and local models, but model downloads require user action.

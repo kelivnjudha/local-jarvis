@@ -5,11 +5,13 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 ## Layers
 
 - `apps/desktop`: Qt 6 Widgets application and visible user controls.
+- `core/ai`: Local Ollama client, Gemma model manager, and prompt helpers.
+- `core/setup`: First-run checks for local database, Ollama, and model readiness.
 - `core/session`: Starts and stops local sessions, emits lifecycle events, and records session IDs.
 - `core/storage`: Owns the SQLite connection, schema creation, and session persistence.
 - `core/privacy`: Tracks explicit capture permissions and exposes capture status.
 - `core/audio` and `core/screen`: Cross-platform interfaces with OS-specific placeholder source files. `DummyAudioCapture` generates fake transcript events for testing.
-- `core/asr`, `core/ocr`, and `core/llm`: Local processing boundaries for future engines.
+- `core/asr`, `core/ocr`, and `core/llm`: Local processing boundaries for future engines. ASR defaults to `StubAsrEngine`; whisper.cpp hooks are optional behind `LOCAL_JARVIS_ENABLE_WHISPER`.
 - `core/logging`: Minimal process-local lifecycle logging.
 
 ## Session Flow
@@ -24,6 +26,14 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 No audio or screen data is captured in this scaffold.
 
 Dummy transcript generation is available only for testing the session, UI, and storage path. It starts after a session is active and the relevant `PrivacyManager` permission is enabled.
+
+Local ASR is prepared as an interface only. No cloud ASR or background upload path exists. Future ASR work must run only during active user-started sessions.
+
+## Local AI
+
+Ollama integration is local-only and targets `http://localhost:11434`. `OllamaClient` supports `/api/tags`, `/api/generate`, and `/api/chat` with non-streaming responses first.
+
+`ModelManager` recommends `gemma4:e4b` when RAM is at least 16 GB and `gemma4:e2b` otherwise. `ensureModelReady()` checks status only; it does not download models. Model pulls run through explicit user-triggered setup/settings actions.
 
 ## Platform Backends
 
@@ -40,14 +50,24 @@ These files are currently placeholders. Real capture backends must consult `Priv
 
 ## Storage
 
-SQLite is used for local persistence at `./data/local_jarvis.db`. The initial schema includes:
+SQLite is used for local persistence in the platform app-data directory:
 
-- `sessions`: session ID, mode, start timestamp, optional end timestamp, optional title.
-- `transcript_segments`: future transcript text linked to sessions.
-- `screen_ocr_segments`: future OCR text linked to sessions.
-- `processed_notes`: generated local summaries, notes, or other note artifacts.
-- `action_items`: future extracted tasks linked to sessions.
-- `flashcards`: future study cards linked to sessions.
-- `privacy_events`: future explicit privacy and capture-state events.
+- Windows: `%LOCALAPPDATA%/LocalJarvis/data/local_jarvis.db`
+- macOS: `~/Library/Application Support/LocalJarvis/data/local_jarvis.db`
+- Linux: `~/.local/share/local-jarvis/data/local_jarvis.db`
+
+The schema is migrated idempotently and stores `schema_version` in `settings`. If SQLite FTS5 is available, Local Jarvis creates `transcript_fts` and `processed_notes_fts` for local search.
+
+The current schema includes:
+
+- `sessions`: session ID, mode, title, start/end timestamps, summary status.
+- `transcript_segments`: transcript text linked to sessions.
+- `screen_ocr_segments`: OCR text linked to sessions.
+- `processed_notes`: generated local summaries, notes, and optional JSON bodies.
+- `action_items`: extracted tasks linked to sessions.
+- `flashcards`: study cards linked to sessions.
+- `model_events`: local model setup and health-check events.
+- `privacy_events`: explicit privacy and capture-state events.
+- `settings`: schema/setup/current-model settings.
 
 The schema is documented in `core/storage/Schema.sql` and mirrored by the storage initialization SQL.

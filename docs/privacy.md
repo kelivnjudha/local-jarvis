@@ -20,8 +20,18 @@ Permission state should be treated as runtime state, not as a hidden global. Mod
 
 The dummy audio backend also follows this rule. It produces fake transcript lines only when the user-visible permission state is enabled and a session is active.
 
+ASR is local-only. The default stub does not transcribe, upload, or call any network service. Future whisper.cpp integration must process local PCM during active user-started sessions only.
+
+Ollama integration is also local-only. `OllamaClient` connects to `http://localhost:11434` and does not call cloud AI APIs. Model pulls happen only after a user-triggered setup/settings action.
+
 ## Local Data
 
-The desktop app stores session metadata in a local SQLite database at `./data/local_jarvis.db`. The current schema stores session timestamps and reserves tables for future transcript, OCR, notes, action item, flashcard, and privacy event data.
+The desktop app stores session metadata in a local SQLite database under the user's app-data directory:
+
+- Windows: `%LOCALAPPDATA%/LocalJarvis/data/local_jarvis.db`
+- macOS: `~/Library/Application Support/LocalJarvis/data/local_jarvis.db`
+- Linux: `~/.local/share/local-jarvis/data/local_jarvis.db`
+
+The current schema stores sessions, transcript segments, OCR segments, processed notes, action items, flashcards, model events, privacy events, and settings locally.
 
 Future storage work should include clear retention controls, export controls, and deletion paths.

@@ -24,6 +24,11 @@ find_package(SQLite3 REQUIRED)
 
 set(LOCAL_JARVIS_CORE_SOURCES
     core/session/SessionManager.cpp
+    core/ai/OllamaClient.cpp
+    core/ai/ModelManager.cpp
+    core/ai/PromptBuilder.cpp
+    core/setup/SetupManager.cpp
+    core/setup/SystemCheck.cpp
     core/audio/AudioCapture.cpp
     core/audio/DummyAudioCapture.cpp
     core/screen/ScreenCapture.cpp
@@ -83,6 +88,10 @@ target_link_libraries(local_jarvis_core
         SQLite::SQLite3
 )
 
+if(WIN32)
+    target_link_libraries(local_jarvis_core PRIVATE ws2_32)
+endif()
+
 target_compile_definitions(local_jarvis_core
     PUBLIC
         LOCAL_JARVIS_ENABLE_WHISPER=$<BOOL:${LOCAL_JARVIS_ENABLE_WHISPER}>
@@ -92,6 +101,9 @@ if(LOCAL_JARVIS_ENABLE_WHISPER AND LOCAL_JARVIS_WHISPER_AVAILABLE AND TARGET whi
     target_link_libraries(local_jarvis_core PRIVATE whisper)
     target_compile_definitions(local_jarvis_core PRIVATE LOCAL_JARVIS_WHISPER_LINKED=1)
 else()
+    if(LOCAL_JARVIS_ENABLE_WHISPER AND LOCAL_JARVIS_WHISPER_AVAILABLE AND NOT TARGET whisper)
+        message(WARNING "whisper.cpp was found, but no CMake target named 'whisper' was exported. Local Jarvis will build the WhisperAsrEngine stub without linking whisper.cpp.")
+    endif()
     target_compile_definitions(local_jarvis_core PRIVATE LOCAL_JARVIS_WHISPER_LINKED=0)
 endif()
 

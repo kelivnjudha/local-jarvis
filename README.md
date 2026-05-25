@@ -16,10 +16,13 @@ All future capture features must require explicit user permission and must show 
 - Start Session and Stop Session buttons
 - Visible capture status panel
 - Transcript and processed notes placeholder panels
-- SQLite storage layer at `./data/local_jarvis.db`
+- SQLite storage layer in the platform app-data directory
 - Session lifecycle creation and stop timestamps
 - Storage methods for sessions, transcript segments, processed notes, and recent session listing
 - Dummy audio capture backend that generates fake transcript lines only after explicit user permission and session start
+- Optional local ASR interface with `StubAsrEngine` by default and whisper.cpp hooks behind `LOCAL_JARVIS_ENABLE_WHISPER`
+- Local Ollama setup flow for Gemma models at `http://localhost:11434`
+- First-run setup and settings screens for database/model readiness
 - Privacy manager with microphone, system audio, and screen capture disabled by default
 - Modular C++20 core for future local ASR, OCR, LLM, audio, and screen modules
 - Platform-specific placeholder files for future capture backends
@@ -65,6 +68,34 @@ cmake --build build-core
 ctest --test-dir build-core
 ```
 
+## Optional Local ASR
+
+Local Jarvis does not use cloud ASR or background uploads. The default ASR engine is a stub.
+
+To prepare whisper.cpp integration, add a local checkout at `third_party/whisper.cpp` and configure with:
+
+```powershell
+cmake -S . -B build -DLOCAL_JARVIS_ENABLE_WHISPER=ON
+```
+
+See [docs/asr.md](docs/asr.md) for details.
+
+## Local AI Setup
+
+Local Jarvis prepares Ollama integration for local Gemma models only. It checks the local Ollama API, recommends `gemma4:e4b` on systems with at least 16 GB RAM, and falls back to `gemma4:e2b` on smaller systems.
+
+The app never silently downloads models. Pulls are started only by user action from the setup/settings UI. See [docs/ollama.md](docs/ollama.md).
+
+## Local Database
+
+Local Jarvis stores its SQLite database at:
+
+- Windows: `%LOCALAPPDATA%/LocalJarvis/data/local_jarvis.db`
+- macOS: `~/Library/Application Support/LocalJarvis/data/local_jarvis.db`
+- Linux: `~/.local/share/local-jarvis/data/local_jarvis.db`
+
+The schema is migrated idempotently and records `schema_version` in the `settings` table. If SQLite FTS5 is available, transcript and processed-note search use local FTS tables.
+
 ## Status
 
-This is an architecture-first scaffold. It does not capture real audio, capture screens, transcribe speech, run OCR, or run an LLM yet. Dummy audio capture generates fake transcript events for UI and storage testing only.
+This is an architecture-first scaffold. It does not capture real audio, capture screens, transcribe speech, run OCR, or call any cloud AI service. Dummy audio capture generates fake transcript events for UI and storage testing only.

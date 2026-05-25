@@ -1,7 +1,13 @@
 #include "audio/DummyAudioCapture.h"
+#include "ai/AiTypes.h"
+#include "ai/ModelManager.h"
+#include "ai/OllamaClient.h"
+#include "ai/PromptBuilder.h"
 #include "asr/AsrEngineFactory.h"
 #include "privacy/PrivacyManager.h"
 #include "session/SessionManager.h"
+#include "setup/SetupManager.h"
+#include "setup/SystemCheck.h"
 #include "storage/Storage.h"
 
 #include <chrono>
@@ -18,12 +24,16 @@ int main()
     using local_jarvis::asr::PcmAudioBuffer;
     using local_jarvis::session::SessionManager;
     using local_jarvis::session::SessionState;
+    using local_jarvis::storage::ActionItemInput;
+    using local_jarvis::storage::FlashcardInput;
     using local_jarvis::storage::ProcessedNoteInput;
+    using local_jarvis::storage::PrivacyEventInput;
+    using local_jarvis::storage::ScreenOcrSegmentInput;
     using local_jarvis::storage::Storage;
     using local_jarvis::storage::TranscriptSegmentInput;
 
     PrivacyManager privacy;
-    const auto asrEngine = local_jarvis::asr::createDefaultAsrEngine();
+    auto asrEngine = local_jarvis::asr::createDefaultAsrEngine();
 #if LOCAL_JARVIS_ENABLE_WHISPER
     if (asrEngine->engineName() != "whisper.cpp stub") {
         std::cerr << "Whisper build flag should select WhisperAsrEngine.\n";
@@ -57,40 +67,61 @@ int main()
         return EXIT_FAILURE;
     }
 
-    const auto defaultPathRoot = std::filesystem::temp_directory_path() / "local-jarvis-default-path-smoke";
-    std::filesystem::remove_all(defaultPathRoot);
-    std::filesystem::create_directories(defaultPathRoot);
-
-    const auto originalPath = std::filesystem::current_path();
-    std::filesystem::current_path(defaultPathRoot);
-    {
-        Storage defaultStorage;
-        if (!defaultStorage.open() || !defaultStorage.createSchema()) {
-            std::cerr << "Failed to initialize default storage path: " << defaultStorage.lastError() << '\n';
-            std::filesystem::current_path(originalPath);
-            return EXIT_FAILURE;
-        }
-
-        defaultStorage.close();
-    }
-    if (!std::filesystem::exists(defaultPathRoot / "data" / "local_jarvis.db")) {
-        std::cerr << "Default storage path did not create ./data/local_jarvis.db.\n";
-        std::filesystem::current_path(originalPath);
+    const auto defaultPath = Storage::defaultDatabasePath();
+    if (defaultPath.filename() != "local_jarvis.db" || defaultPath.parent_path().filename() != "data") {
+        std::cerr << "Default storage path should end with data/local_jarvis.db.\n";
         return EXIT_FAILURE;
     }
-    std::filesystem::current_path(originalPath);
-    std::filesystem::remove_all(defaultPathRoot);
 
     const auto dbPath = std::filesystem::temp_directory_path() / "local-jarvis-core-smoke.sqlite";
     std::filesystem::remove(dbPath);
 
     Storage storage;
-    if (!storage.open(dbPath) || !storage.createSchema()) {
+    if (!storage.initialize(dbPath)) {
         std::cerr << "Failed to initialize storage: " << storage.lastError() << '\n';
         return EXIT_FAILURE;
     }
+    if (storage.getSetting("schema_version").value_or("") != "1") {
+        std::cerr << "Schema version was not recorded.\n";
+        return EXIT_FAILURE;
+    }
 
-    const auto storedSessionId = storage.createSession("study");
+    if (!storage.setSetting("ai.current_model", local_jarvis::ai::kFallbackGemmaModel)) {
+        std::cerr << "Failed to write setting: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+    if (storage.getSetting("ai.current_model").value_or("") != local_jarvis::ai::kFallbackGemmaModel) {
+        std::cerr << "Failed to read setting.\n";
+        return EXIT_FAILURE;
+    }
+    if (!storage.addModelEvent("test_event", std::string(local_jarvis::ai::kFallbackGemmaModel), std::string("Smoke test model event")).has_value()) {
+        std::cerr << "Failed to insert model event: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+
+    local_jarvis::setup::SystemCheck systemCheck;
+    local_jarvis::ai::OllamaClient offlineOllama("127.0.0.1", 1, 100);
+    local_jarvis::ai::ModelManager modelManager(offlineOllama, systemCheck);
+    const auto recommendedModel = modelManager.detectRecommendedModel();
+    if (recommendedModel != local_jarvis::ai::kDefaultGemmaModel
+        && recommendedModel != local_jarvis::ai::kFallbackGemmaModel) {
+        std::cerr << "Recommended model should be one of the Gemma defaults.\n";
+        return EXIT_FAILURE;
+    }
+
+    local_jarvis::setup::SetupManager setupManager(storage, modelManager, offlineOllama);
+    const auto setupStatus = setupManager.firstRunCheck();
+    if (!setupStatus.databaseReady || setupStatus.ollamaRunning || setupStatus.modelReady) {
+        std::cerr << "Offline first-run setup status should have DB ready and local AI unavailable.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (local_jarvis::ai::PromptBuilder::healthCheckPrompt() != "Reply only with: LOCAL_JARVIS_READY") {
+        std::cerr << "Health check prompt changed unexpectedly.\n";
+        return EXIT_FAILURE;
+    }
+
+    const auto storedSessionId = storage.createSession("study", std::string("Storage smoke session"));
     if (!storedSessionId.has_value()) {
         std::cerr << "Failed to create storage session: " << storage.lastError() << '\n';
         return EXIT_FAILURE;
@@ -101,7 +132,7 @@ int main()
         .startMs = 0,
         .endMs = 1200,
         .speaker = std::string("Speaker 1"),
-        .text = "This is a local transcript placeholder.",
+        .text = "This is a local alpha transcript placeholder.",
         .source = "manual-test"
     });
     if (!transcriptId.has_value()) {
@@ -109,14 +140,53 @@ int main()
         return EXIT_FAILURE;
     }
 
+    if (!storage.addScreenOcrSegment(ScreenOcrSegmentInput {
+            .sessionId = *storedSessionId,
+            .timestampMs = 1500,
+            .windowTitle = std::string("Local Jarvis"),
+            .text = "Visible local OCR placeholder"
+        }).has_value()) {
+        std::cerr << "Failed to insert screen OCR segment: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+
     const auto noteId = storage.addProcessedNote(ProcessedNoteInput {
         .sessionId = *storedSessionId,
         .type = "summary",
-        .title = "Smoke test note",
-        .body = "Storage can persist processed notes."
+        .title = std::string("Smoke test note"),
+        .body = "Storage can persist processed notes with banana search text.",
+        .jsonBody = std::string("{\"kind\":\"summary\"}")
     });
     if (!noteId.has_value()) {
         std::cerr << "Failed to insert processed note: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+
+    if (!storage.addActionItem(ActionItemInput {
+            .sessionId = *storedSessionId,
+            .text = "Review Local Jarvis storage",
+            .status = "open"
+        }).has_value()) {
+        std::cerr << "Failed to insert action item: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+
+    if (!storage.addFlashcard(FlashcardInput {
+            .sessionId = *storedSessionId,
+            .question = "Where does Local Jarvis store data?",
+            .answer = "In a local SQLite database.",
+            .topic = std::string("storage")
+        }).has_value()) {
+        std::cerr << "Failed to insert flashcard: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+
+    if (!storage.addPrivacyEvent(PrivacyEventInput {
+            .sessionId = storedSessionId,
+            .eventType = "test_privacy_event",
+            .details = "Smoke test privacy event"
+        }).has_value()) {
+        std::cerr << "Failed to insert privacy event: " << storage.lastError() << '\n';
         return EXIT_FAILURE;
     }
 
@@ -128,6 +198,20 @@ int main()
     const auto recentSessions = storage.listRecentSessions(5);
     if (recentSessions.empty() || recentSessions.front().id.empty()) {
         std::cerr << "Failed to list recent sessions: " << storage.lastError() << '\n';
+        return EXIT_FAILURE;
+    }
+    if (recentSessions.front().summaryStatus.empty()) {
+        std::cerr << "Recent session should include summary status.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (storage.searchTranscripts("alpha", 5).empty()) {
+        std::cerr << "Transcript search returned no results.\n";
+        return EXIT_FAILURE;
+    }
+
+    if (storage.searchProcessedNotes("banana", 5).empty()) {
+        std::cerr << "Processed note search returned no results.\n";
         return EXIT_FAILURE;
     }
 

@@ -2,8 +2,10 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <iomanip>
@@ -17,13 +19,22 @@
 namespace local_jarvis::storage {
 namespace {
 
-constexpr const char *kSchemaSql = R"sql(
+constexpr const char *kSchemaVersion = "1";
+
+constexpr const char *kCoreSchemaSql = R"sql(
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id TEXT PRIMARY KEY,
     mode TEXT NOT NULL,
+    title TEXT,
     started_at TEXT NOT NULL,
-    ended_at TEXT NULL,
-    title TEXT NULL
+    ended_at TEXT,
+    summary_status TEXT DEFAULT 'pending'
 );
 
 CREATE TABLE IF NOT EXISTS transcript_segments (
@@ -31,9 +42,10 @@ CREATE TABLE IF NOT EXISTS transcript_segments (
     session_id TEXT NOT NULL,
     start_ms INTEGER NOT NULL,
     end_ms INTEGER NOT NULL,
-    speaker TEXT NULL,
+    speaker TEXT,
     text TEXT NOT NULL,
     source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -41,8 +53,9 @@ CREATE TABLE IF NOT EXISTS screen_ocr_segments (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     timestamp_ms INTEGER NOT NULL,
-    window_title TEXT NULL,
+    window_title TEXT,
     text TEXT NOT NULL,
+    created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -50,8 +63,9 @@ CREATE TABLE IF NOT EXISTS processed_notes (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     type TEXT NOT NULL,
-    title TEXT NOT NULL,
+    title TEXT,
     body TEXT NOT NULL,
+    json_body TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
@@ -60,8 +74,9 @@ CREATE TABLE IF NOT EXISTS action_items (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     text TEXT NOT NULL,
-    status TEXT NOT NULL,
-    due_at TEXT NULL,
+    status TEXT DEFAULT 'open',
+    due_at TEXT,
+    created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -70,36 +85,48 @@ CREATE TABLE IF NOT EXISTS flashcards (
     session_id TEXT NOT NULL,
     question TEXT NOT NULL,
     answer TEXT NOT NULL,
-    topic TEXT NULL,
+    topic TEXT,
+    created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS model_events (
+    id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    model_name TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS privacy_events (
     id TEXT PRIMARY KEY,
-    session_id TEXT NULL,
+    session_id TEXT,
     event_type TEXT NOT NULL,
     details TEXT NOT NULL,
     created_at TEXT NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_transcript_segments_session_id
-    ON transcript_segments(session_id);
+CREATE INDEX IF NOT EXISTS idx_transcript_segments_session_start
+    ON transcript_segments(session_id, start_ms);
 
-CREATE INDEX IF NOT EXISTS idx_screen_ocr_segments_session_id
-    ON screen_ocr_segments(session_id);
+CREATE INDEX IF NOT EXISTS idx_screen_ocr_segments_session_time
+    ON screen_ocr_segments(session_id, timestamp_ms);
 
-CREATE INDEX IF NOT EXISTS idx_processed_notes_session_id
-    ON processed_notes(session_id);
+CREATE INDEX IF NOT EXISTS idx_processed_notes_session_type
+    ON processed_notes(session_id, type);
 
-CREATE INDEX IF NOT EXISTS idx_action_items_session_id
-    ON action_items(session_id);
+CREATE INDEX IF NOT EXISTS idx_action_items_session_status
+    ON action_items(session_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_flashcards_session_id
-    ON flashcards(session_id);
+CREATE INDEX IF NOT EXISTS idx_flashcards_session_topic
+    ON flashcards(session_id, topic);
 
-CREATE INDEX IF NOT EXISTS idx_privacy_events_session_id
-    ON privacy_events(session_id);
+CREATE INDEX IF NOT EXISTS idx_model_events_created_at
+    ON model_events(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_events_session_created
+    ON privacy_events(session_id, created_at);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_started_at
     ON sessions(started_at);
@@ -109,6 +136,21 @@ std::string pathToUtf8(const std::filesystem::path &path)
 {
     const auto value = path.u8string();
     return { reinterpret_cast<const char *>(value.data()), value.size() };
+}
+
+std::filesystem::path homePath()
+{
+    if (const char *home = std::getenv("HOME")) {
+        return home;
+    }
+
+#if defined(_WIN32)
+    if (const char *profile = std::getenv("USERPROFILE")) {
+        return profile;
+    }
+#endif
+
+    return std::filesystem::current_path();
 }
 
 std::string utcNow()
@@ -170,6 +212,25 @@ void bindOptionalText(sqlite3_stmt *statement, int index, const std::optional<st
     sqlite3_bind_null(statement, index);
 }
 
+std::string likePattern(const std::string &query)
+{
+    return "%" + query + "%";
+}
+
+std::string ftsPhrase(const std::string &query)
+{
+    std::string escaped = "\"";
+    for (const char character : query) {
+        if (character == '"') {
+            escaped += "\"\"";
+        } else {
+            escaped += character;
+        }
+    }
+    escaped += '"';
+    return escaped;
+}
+
 } // namespace
 
 Storage::~Storage()
@@ -179,7 +240,30 @@ Storage::~Storage()
 
 std::filesystem::path Storage::defaultDatabasePath()
 {
-    return std::filesystem::current_path() / "data" / "local_jarvis.db";
+#if defined(_WIN32)
+    if (const char *localAppData = std::getenv("LOCALAPPDATA")) {
+        return std::filesystem::path(localAppData) / "LocalJarvis" / "data" / "local_jarvis.db";
+    }
+    return homePath() / "AppData" / "Local" / "LocalJarvis" / "data" / "local_jarvis.db";
+#elif defined(__APPLE__)
+    return homePath() / "Library" / "Application Support" / "LocalJarvis" / "data" / "local_jarvis.db";
+#else
+    return homePath() / ".local" / "share" / "local-jarvis" / "data" / "local_jarvis.db";
+#endif
+}
+
+bool Storage::initialize()
+{
+    return initialize(defaultDatabasePath());
+}
+
+bool Storage::initialize(const std::filesystem::path &databasePath)
+{
+    if (!open(databasePath)) {
+        return false;
+    }
+
+    return runMigrations();
 }
 
 bool Storage::open()
@@ -227,26 +311,32 @@ void Storage::close()
         sqlite3_close(m_database);
         m_database = nullptr;
     }
+    m_ftsAvailable = false;
 }
 
 bool Storage::createSchema()
 {
-    return execute(kSchemaSql);
+    return runMigrations();
 }
 
 bool Storage::initializeSchema()
 {
-    return createSchema();
+    return runMigrations();
 }
 
-std::optional<std::string> Storage::createSession(const std::string &mode)
+std::optional<std::string> Storage::createSession(
+    const std::string &mode,
+    const std::optional<std::string> &title)
 {
     if (!isOpen()) {
         m_lastError = "Database is not open.";
         return std::nullopt;
     }
 
-    constexpr const char *sql = "INSERT INTO sessions (id, mode, started_at) VALUES (?, ?, ?);";
+    constexpr const char *sql = R"sql(
+INSERT INTO sessions (id, mode, title, started_at, summary_status)
+VALUES (?, ?, ?, ?, 'pending');
+)sql";
     sqlite3_stmt *statement = nullptr;
 
     if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
@@ -260,7 +350,8 @@ std::optional<std::string> Storage::createSession(const std::string &mode)
 
     bindText(statement, 1, sessionId);
     bindText(statement, 2, storedMode);
-    bindText(statement, 3, startedAt);
+    bindOptionalText(statement, 3, title);
+    bindText(statement, 4, startedAt);
 
     const bool ok = bindAndStep(statement);
     sqlite3_finalize(statement);
@@ -286,8 +377,7 @@ bool Storage::endSession(const std::string &sessionId)
         return false;
     }
 
-    const std::string endedAt = utcNow();
-    bindText(statement, 1, endedAt);
+    bindText(statement, 1, utcNow());
     bindText(statement, 2, sessionId);
 
     const bool ok = bindAndStep(statement);
@@ -309,8 +399,8 @@ std::optional<std::string> Storage::addTranscriptSegment(const TranscriptSegment
     }
 
     constexpr const char *sql = R"sql(
-INSERT INTO transcript_segments (id, session_id, start_ms, end_ms, speaker, text, source)
-VALUES (?, ?, ?, ?, ?, ?, ?);
+INSERT INTO transcript_segments (id, session_id, start_ms, end_ms, speaker, text, source, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 )sql";
 
     sqlite3_stmt *statement = nullptr;
@@ -327,6 +417,55 @@ VALUES (?, ?, ?, ?, ?, ?, ?);
     bindOptionalText(statement, 5, segment.speaker);
     bindText(statement, 6, segment.text);
     bindText(statement, 7, segment.source);
+    bindText(statement, 8, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return std::nullopt;
+    }
+
+    if (m_ftsAvailable) {
+        sqlite3_stmt *ftsStatement = nullptr;
+        constexpr const char *ftsSql = "INSERT INTO transcript_fts (id, session_id, text) VALUES (?, ?, ?);";
+        if (sqlite3_prepare_v2(m_database, ftsSql, -1, &ftsStatement, nullptr) == SQLITE_OK) {
+            bindText(ftsStatement, 1, id);
+            bindText(ftsStatement, 2, segment.sessionId);
+            bindText(ftsStatement, 3, segment.text);
+            sqlite3_step(ftsStatement);
+            sqlite3_finalize(ftsStatement);
+        }
+    }
+
+    m_lastError.clear();
+    return id;
+}
+
+std::optional<std::string> Storage::addScreenOcrSegment(const ScreenOcrSegmentInput &segment)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO screen_ocr_segments (id, session_id, timestamp_ms, window_title, text, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare add screen OCR segment statement");
+        return std::nullopt;
+    }
+
+    const std::string id = generateId("screen-ocr");
+    bindText(statement, 1, id);
+    bindText(statement, 2, segment.sessionId);
+    sqlite3_bind_int64(statement, 3, segment.timestampMs);
+    bindOptionalText(statement, 4, segment.windowTitle);
+    bindText(statement, 5, segment.text);
+    bindText(statement, 6, utcNow());
 
     const bool ok = bindAndStep(statement);
     sqlite3_finalize(statement);
@@ -345,8 +484,8 @@ std::optional<std::string> Storage::addProcessedNote(const ProcessedNoteInput &n
     }
 
     constexpr const char *sql = R"sql(
-INSERT INTO processed_notes (id, session_id, type, title, body, created_at)
-VALUES (?, ?, ?, ?, ?, ?);
+INSERT INTO processed_notes (id, session_id, type, title, body, json_body, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?);
 )sql";
 
     sqlite3_stmt *statement = nullptr;
@@ -359,8 +498,93 @@ VALUES (?, ?, ?, ?, ?, ?);
     bindText(statement, 1, id);
     bindText(statement, 2, note.sessionId);
     bindText(statement, 3, note.type);
-    bindText(statement, 4, note.title);
+    bindOptionalText(statement, 4, note.title);
     bindText(statement, 5, note.body);
+    bindOptionalText(statement, 6, note.jsonBody);
+    bindText(statement, 7, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return std::nullopt;
+    }
+
+    if (m_ftsAvailable) {
+        sqlite3_stmt *ftsStatement = nullptr;
+        constexpr const char *ftsSql = "INSERT INTO processed_notes_fts (id, session_id, title, body) VALUES (?, ?, ?, ?);";
+        if (sqlite3_prepare_v2(m_database, ftsSql, -1, &ftsStatement, nullptr) == SQLITE_OK) {
+            bindText(ftsStatement, 1, id);
+            bindText(ftsStatement, 2, note.sessionId);
+            bindText(ftsStatement, 3, note.title.value_or(""));
+            bindText(ftsStatement, 4, note.body);
+            sqlite3_step(ftsStatement);
+            sqlite3_finalize(ftsStatement);
+        }
+    }
+
+    m_lastError.clear();
+    return id;
+}
+
+std::optional<std::string> Storage::addActionItem(const ActionItemInput &actionItem)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO action_items (id, session_id, text, status, due_at, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare add action item statement");
+        return std::nullopt;
+    }
+
+    const std::string id = generateId("action");
+    bindText(statement, 1, id);
+    bindText(statement, 2, actionItem.sessionId);
+    bindText(statement, 3, actionItem.text);
+    bindText(statement, 4, actionItem.status.empty() ? "open" : actionItem.status);
+    bindOptionalText(statement, 5, actionItem.dueAt);
+    bindText(statement, 6, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return std::nullopt;
+    }
+
+    return id;
+}
+
+std::optional<std::string> Storage::addFlashcard(const FlashcardInput &flashcard)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO flashcards (id, session_id, question, answer, topic, created_at)
+VALUES (?, ?, ?, ?, ?, ?);
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare add flashcard statement");
+        return std::nullopt;
+    }
+
+    const std::string id = generateId("flashcard");
+    bindText(statement, 1, id);
+    bindText(statement, 2, flashcard.sessionId);
+    bindText(statement, 3, flashcard.question);
+    bindText(statement, 4, flashcard.answer);
+    bindOptionalText(statement, 5, flashcard.topic);
     bindText(statement, 6, utcNow());
 
     const bool ok = bindAndStep(statement);
@@ -382,7 +606,7 @@ std::vector<SessionRecord> Storage::listRecentSessions(int limit)
     }
 
     constexpr const char *sql = R"sql(
-SELECT id, mode, started_at, ended_at, title
+SELECT id, mode, started_at, ended_at, title, COALESCE(summary_status, 'pending')
 FROM sessions
 ORDER BY started_at DESC
 LIMIT ?;
@@ -413,7 +637,8 @@ LIMIT ?;
             .mode = columnText(statement, 1),
             .startedAt = columnText(statement, 2),
             .endedAt = nullableColumnText(statement, 3),
-            .title = nullableColumnText(statement, 4)
+            .title = nullableColumnText(statement, 4),
+            .summaryStatus = columnText(statement, 5)
         });
     }
 
@@ -450,6 +675,244 @@ int Storage::countTranscriptSegmentsForSession(const std::string &sessionId)
     return count;
 }
 
+bool Storage::setSetting(const std::string &key, const std::string &value)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return false;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO settings (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+    value = excluded.value,
+    updated_at = excluded.updated_at;
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare set setting statement");
+        return false;
+    }
+
+    bindText(statement, 1, key);
+    bindText(statement, 2, value);
+    bindText(statement, 3, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    return ok;
+}
+
+std::optional<std::string> Storage::getSetting(const std::string &key)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = "SELECT value FROM settings WHERE key = ?;";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare get setting statement");
+        return std::nullopt;
+    }
+
+    bindText(statement, 1, key);
+
+    std::optional<std::string> value;
+    const int result = sqlite3_step(statement);
+    if (result == SQLITE_ROW) {
+        value = columnText(statement, 0);
+        m_lastError.clear();
+    } else if (result == SQLITE_DONE) {
+        m_lastError.clear();
+    } else {
+        setLastSqliteError("Failed to read setting");
+    }
+
+    sqlite3_finalize(statement);
+    return value;
+}
+
+std::optional<std::string> Storage::addModelEvent(
+    const std::string &eventType,
+    const std::optional<std::string> &modelName,
+    const std::optional<std::string> &details)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO model_events (id, event_type, model_name, details, created_at)
+VALUES (?, ?, ?, ?, ?);
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare add model event statement");
+        return std::nullopt;
+    }
+
+    const std::string id = generateId("model-event");
+    bindText(statement, 1, id);
+    bindText(statement, 2, eventType);
+    bindOptionalText(statement, 3, modelName);
+    bindOptionalText(statement, 4, details);
+    bindText(statement, 5, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return std::nullopt;
+    }
+
+    return id;
+}
+
+std::optional<std::string> Storage::addPrivacyEvent(const PrivacyEventInput &event)
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return std::nullopt;
+    }
+
+    constexpr const char *sql = R"sql(
+INSERT INTO privacy_events (id, session_id, event_type, details, created_at)
+VALUES (?, ?, ?, ?, ?);
+)sql";
+
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare add privacy event statement");
+        return std::nullopt;
+    }
+
+    const std::string id = generateId("privacy-event");
+    bindText(statement, 1, id);
+    bindOptionalText(statement, 2, event.sessionId);
+    bindText(statement, 3, event.eventType);
+    bindText(statement, 4, event.details);
+    bindText(statement, 5, utcNow());
+
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return std::nullopt;
+    }
+
+    return id;
+}
+
+std::vector<SearchResult> Storage::searchTranscripts(const std::string &query, int limit)
+{
+    std::vector<SearchResult> results;
+    if (!isOpen() || query.empty()) {
+        return results;
+    }
+
+    sqlite3_stmt *statement = nullptr;
+    if (m_ftsAvailable) {
+        constexpr const char *ftsSql = R"sql(
+SELECT id, session_id, text, bm25(transcript_fts) AS rank
+FROM transcript_fts
+WHERE transcript_fts MATCH ?
+ORDER BY rank
+LIMIT ?;
+)sql";
+        if (sqlite3_prepare_v2(m_database, ftsSql, -1, &statement, nullptr) == SQLITE_OK) {
+            bindText(statement, 1, ftsPhrase(query));
+            sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+        }
+    }
+
+    if (statement == nullptr) {
+        constexpr const char *likeSql = R"sql(
+SELECT id, session_id, text, 0.0
+FROM transcript_segments
+WHERE text LIKE ?
+ORDER BY start_ms
+LIMIT ?;
+)sql";
+        if (sqlite3_prepare_v2(m_database, likeSql, -1, &statement, nullptr) != SQLITE_OK) {
+            setLastSqliteError("Failed to prepare transcript search statement");
+            return results;
+        }
+        bindText(statement, 1, likePattern(query));
+        sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+    }
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        results.push_back(SearchResult {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .text = columnText(statement, 2),
+            .rank = sqlite3_column_double(statement, 3)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return results;
+}
+
+std::vector<SearchResult> Storage::searchProcessedNotes(const std::string &query, int limit)
+{
+    std::vector<SearchResult> results;
+    if (!isOpen() || query.empty()) {
+        return results;
+    }
+
+    sqlite3_stmt *statement = nullptr;
+    if (m_ftsAvailable) {
+        constexpr const char *ftsSql = R"sql(
+SELECT id, session_id, COALESCE(title, '') || char(10) || body, bm25(processed_notes_fts) AS rank
+FROM processed_notes_fts
+WHERE processed_notes_fts MATCH ?
+ORDER BY rank
+LIMIT ?;
+)sql";
+        if (sqlite3_prepare_v2(m_database, ftsSql, -1, &statement, nullptr) == SQLITE_OK) {
+            bindText(statement, 1, ftsPhrase(query));
+            sqlite3_bind_int(statement, 2, limit < 1 ? 1 : limit);
+        }
+    }
+
+    if (statement == nullptr) {
+        constexpr const char *likeSql = R"sql(
+SELECT id, session_id, COALESCE(title, '') || char(10) || body, 0.0
+FROM processed_notes
+WHERE title LIKE ? OR body LIKE ?
+ORDER BY created_at DESC
+LIMIT ?;
+)sql";
+        if (sqlite3_prepare_v2(m_database, likeSql, -1, &statement, nullptr) != SQLITE_OK) {
+            setLastSqliteError("Failed to prepare processed note search statement");
+            return results;
+        }
+        const std::string pattern = likePattern(query);
+        bindText(statement, 1, pattern);
+        bindText(statement, 2, pattern);
+        sqlite3_bind_int(statement, 3, limit < 1 ? 1 : limit);
+    }
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        results.push_back(SearchResult {
+            .id = columnText(statement, 0),
+            .sessionId = columnText(statement, 1),
+            .text = columnText(statement, 2),
+            .rank = sqlite3_column_double(statement, 3)
+        });
+    }
+
+    sqlite3_finalize(statement);
+    m_lastError.clear();
+    return results;
+}
+
 bool Storage::isOpen() const
 {
     return m_database != nullptr;
@@ -460,7 +923,134 @@ const std::string &Storage::lastError() const
     return m_lastError;
 }
 
+bool Storage::runMigrations()
+{
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return false;
+    }
+
+    if (!ensureCoreSchema()) {
+        return false;
+    }
+
+    if (!addColumnIfMissing("sessions", "summary_status", "summary_status TEXT DEFAULT 'pending'")
+        || !addColumnIfMissing("transcript_segments", "created_at", "created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")
+        || !addColumnIfMissing("screen_ocr_segments", "created_at", "created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")
+        || !addColumnIfMissing("processed_notes", "json_body", "json_body TEXT")
+        || !addColumnIfMissing("action_items", "created_at", "created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")
+        || !addColumnIfMissing("flashcards", "created_at", "created_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00Z'")) {
+        return false;
+    }
+
+    if (!ensureFtsTables()) {
+        return false;
+    }
+
+    return setSetting("schema_version", kSchemaVersion);
+}
+
+bool Storage::ensureCoreSchema()
+{
+    return execute(kCoreSchemaSql);
+}
+
+bool Storage::ensureFtsTables()
+{
+    m_ftsAvailable = isFts5Available();
+    if (!m_ftsAvailable) {
+        m_lastError.clear();
+        return setSetting("features.fts5", "false");
+    }
+
+    constexpr const char *ftsSql = R"sql(
+CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts
+USING fts5(id UNINDEXED, session_id UNINDEXED, text);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS processed_notes_fts
+USING fts5(id UNINDEXED, session_id UNINDEXED, title, body);
+
+INSERT INTO transcript_fts (id, session_id, text)
+SELECT t.id, t.session_id, t.text
+FROM transcript_segments t
+WHERE NOT EXISTS (
+    SELECT 1 FROM transcript_fts f WHERE f.id = t.id
+);
+
+INSERT INTO processed_notes_fts (id, session_id, title, body)
+SELECT p.id, p.session_id, COALESCE(p.title, ''), p.body
+FROM processed_notes p
+WHERE NOT EXISTS (
+    SELECT 1 FROM processed_notes_fts f WHERE f.id = p.id
+);
+)sql";
+
+    if (!execute(ftsSql)) {
+        return false;
+    }
+
+    return setSetting("features.fts5", "true");
+}
+
+bool Storage::isFts5Available()
+{
+    char *errorMessage = nullptr;
+    const int createResult = sqlite3_exec(
+        m_database,
+        "CREATE VIRTUAL TABLE IF NOT EXISTS temp.local_jarvis_fts5_probe USING fts5(content);",
+        nullptr,
+        nullptr,
+        &errorMessage);
+
+    if (createResult != SQLITE_OK) {
+        sqlite3_free(errorMessage);
+        m_lastError.clear();
+        return false;
+    }
+
+    sqlite3_exec(m_database, "DROP TABLE IF EXISTS temp.local_jarvis_fts5_probe;", nullptr, nullptr, nullptr);
+    return true;
+}
+
+bool Storage::addColumnIfMissing(
+    const std::string &tableName,
+    const std::string &columnName,
+    const std::string &columnDefinition)
+{
+    if (columnExists(tableName, columnName)) {
+        return true;
+    }
+
+    return execute("ALTER TABLE " + tableName + " ADD COLUMN " + columnDefinition + ";");
+}
+
+bool Storage::columnExists(const std::string &tableName, const std::string &columnName)
+{
+    sqlite3_stmt *statement = nullptr;
+    const std::string sql = "PRAGMA table_info(" + tableName + ");";
+    if (sqlite3_prepare_v2(m_database, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to inspect table columns");
+        return false;
+    }
+
+    bool found = false;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        if (columnName == columnText(statement, 1)) {
+            found = true;
+            break;
+        }
+    }
+
+    sqlite3_finalize(statement);
+    return found;
+}
+
 bool Storage::execute(const char *sql)
+{
+    return execute(std::string(sql));
+}
+
+bool Storage::execute(const std::string &sql)
 {
     if (!isOpen()) {
         m_lastError = "Database is not open.";
@@ -468,7 +1058,7 @@ bool Storage::execute(const char *sql)
     }
 
     char *errorMessage = nullptr;
-    const int result = sqlite3_exec(m_database, sql, nullptr, nullptr, &errorMessage);
+    const int result = sqlite3_exec(m_database, sql.c_str(), nullptr, nullptr, &errorMessage);
     if (result != SQLITE_OK) {
         m_lastError = errorMessage != nullptr ? errorMessage : "Unknown SQLite error.";
         sqlite3_free(errorMessage);
