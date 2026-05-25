@@ -10,10 +10,16 @@ namespace local_jarvis::asr {
 
 enum class AsrStatus {
     Disabled,
+    Loading,
     Ready,
     Listening,
     Processing,
     Error
+};
+
+enum class AsrBackend {
+    Stub,
+    Whisper
 };
 
 struct AsrInputChunk {
@@ -52,11 +58,50 @@ struct AsrResult {
     std::string message;
 };
 
+struct AsrEngineConfig {
+    std::string modelPath;
+    std::string language = "auto";
+    bool translateToEnglish = false;
+    int maxThreads = 4;
+};
+
+[[nodiscard]] inline std::string toString(AsrBackend backend)
+{
+    switch (backend) {
+    case AsrBackend::Stub:
+        return "stub";
+    case AsrBackend::Whisper:
+        return "whisper";
+    }
+    return "stub";
+}
+
+[[nodiscard]] inline AsrBackend asrBackendFromString(const std::string &value)
+{
+    if (value == "whisper" || value == "Whisper") {
+        return AsrBackend::Whisper;
+    }
+    return AsrBackend::Stub;
+}
+
+[[nodiscard]] inline std::string displayName(AsrBackend backend)
+{
+    switch (backend) {
+    case AsrBackend::Stub:
+        return "Stub";
+    case AsrBackend::Whisper:
+        return "Whisper";
+    }
+    return "Stub";
+}
+
 [[nodiscard]] inline std::string toString(AsrStatus status)
 {
     switch (status) {
     case AsrStatus::Disabled:
         return "Disabled";
+    case AsrStatus::Loading:
+        return "Loading";
     case AsrStatus::Ready:
         return "Ready";
     case AsrStatus::Listening:

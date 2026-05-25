@@ -1,52 +1,74 @@
 # Local ASR
 
-Local Jarvis has a local-only ASR scaffold that accepts in-memory microphone PCM chunks, processes them off the UI thread, feeds the caption pipeline, and stores final transcript segments during active user-started sessions.
+Local Jarvis has a local-only ASR pipeline that accepts in-memory microphone PCM chunks, processes them off the UI thread, feeds captions, and stores final transcript text during active user-started sessions.
 
-## Default Build
+## Default Build: Stub
 
-By default, `LOCAL_JARVIS_ENABLE_WHISPER` is `OFF`. The app builds with `StubAsrEngine`, and the desktop UI shows:
+By default, `LOCAL_JARVIS_ENABLE_WHISPER` is `OFF`.
 
-```text
-ASR backend: Stub
+```powershell
+cmake --preset windows-msvc-core-debug
+cmake --build --preset windows-msvc-core-debug
+ctest --preset windows-msvc-core-debug
 ```
 
-The stub backend is deterministic for development and automated tests. It produces text such as:
+In this build:
+
+- Stub remains the default ASR backend.
+- Whisper is shown as unavailable/disabled in the desktop UI.
+- No Whisper headers, libraries, model files, downloads, or network services are required.
+- Stub transcript segments use source `microphone_asr_stub`.
+
+The stub backend emits deterministic development text such as:
 
 ```text
 Stub transcript chunk 1
-Stub transcript chunk 2
 ```
 
-This is not real speech recognition. It verifies the local transcript pipeline without requiring a model download, microphone hardware, or `whisper.cpp`.
+## Build With whisper.cpp
+
+Whisper support is opt-in and requires a local `whisper.cpp` checkout. Local Jarvis does not vendor `whisper.cpp`, does not download it during configure/build, and does not download model files.
+
+Example:
+
+```powershell
+cmake -S . -B out/build/windows-msvc-core-whisper `
+  -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT\scripts\buildsystems\vcpkg.cmake" `
+  -DLOCAL_JARVIS_BUILD_DESKTOP=OFF `
+  -DLOCAL_JARVIS_ENABLE_WHISPER=ON `
+  -DLOCAL_JARVIS_WHISPER_CPP_DIR="C:\dev\whisper.cpp"
+cmake --build out/build/windows-msvc-core-whisper --config Debug
+```
+
+If `LOCAL_JARVIS_ENABLE_WHISPER=ON` and `LOCAL_JARVIS_WHISPER_CPP_DIR` does not point to a valid checkout containing `CMakeLists.txt`, CMake fails with a clear message. The checkout must export a CMake target named `whisper`.
+
+## Model Files
+
+Select a local Whisper model file in the desktop UI:
+
+```text
+Session > Local ASR > Backend: Whisper > Browse Model
+```
+
+Suggested development models:
+
+- `tiny` or `base` for fast local testing.
+- `small` for better quality once the pipeline is verified.
+
+Do not commit model files to this repo.
 
 ## Runtime Behavior
 
-- Microphone capture still starts only after an explicit user action.
-- The ASR toggle is separate from the microphone toggle.
-- ASR chunks are buffered in memory only.
+- Microphone capture still starts only after explicit user action.
+- ASR is controlled separately from the microphone toggle.
+- Whisper processes normalized in-memory mono float samples.
+- 48 kHz and other sample rates are converted to 16 kHz with a simple MVP linear resampler.
 - Raw audio is not written to disk.
-- Transcript segments are stored in SQLite only while an explicit session is active.
-- Standalone microphone level tests do not create transcript records.
-- Stub transcript segments use source `microphone_asr_stub`.
+- Transcript text is stored only while an explicit session is active.
+- Standalone microphone level tests do not store transcripts.
+- Whisper transcript segments use source `microphone_asr_whisper`.
 
-## Enable whisper.cpp Hooks
+## Privacy Boundary
 
-Add a local `whisper.cpp` checkout under:
-
-```text
-third_party/whisper.cpp
-```
-
-Then configure with:
-
-```powershell
-cmake -S . -B build -DLOCAL_JARVIS_ENABLE_WHISPER=ON
-```
-
-If `LOCAL_JARVIS_ENABLE_WHISPER` is `ON` and `LOCAL_JARVIS_WHISPER_SOURCE_DIR` does not point to a local `whisper.cpp` checkout, CMake fails with a clear message. The scaffold also expects the dependency to export a CMake target named `whisper`.
-
-The current Whisper backend is a placeholder hook. Real transcription is not implemented in this phase.
-
-## Safety Boundary
-
-ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, system audio capture, screen capture, OCR, or background transcription.
+ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, system audio capture, screen capture, OCR, or background transcription. Audio is processed in memory and dropped; only transcript text from active sessions is stored in SQLite.

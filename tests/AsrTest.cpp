@@ -3,6 +3,7 @@
 #include "asr/AsrWorker.h"
 #include "asr/AudioChunkBuffer.h"
 #include "asr/StubAsrEngine.h"
+#include "asr/WhisperAudioConversion.h"
 #include "storage/Storage.h"
 
 #include <chrono>
@@ -41,11 +42,6 @@ int main()
     using local_jarvis::asr::StubAsrEngine;
     using local_jarvis::storage::Storage;
     using local_jarvis::storage::TranscriptSegmentInput;
-
-#if LOCAL_JARVIS_ENABLE_WHISPER
-    std::cerr << "This test verifies the default stub ASR path and expects LOCAL_JARVIS_ENABLE_WHISPER=OFF.\n";
-    return EXIT_SUCCESS;
-#endif
 
     AudioChunkBuffer buffer;
     buffer.configure(1000, 200, 2500);
@@ -183,11 +179,44 @@ int main()
             "Final ASR transcript segments should store in transcript_segments.")) {
         return EXIT_FAILURE;
     }
+    if (!expect(storage.setSetting("asr.backend", "whisper")
+            && storage.setSetting("asr.whisper.model_path", "C:/models/ggml-base.bin")
+            && storage.getSetting("asr.backend").value_or("") == "whisper",
+            "ASR backend/model settings should save and load through Storage.")) {
+        return EXIT_FAILURE;
+    }
     storage.close();
     std::filesystem::remove(dbPath);
 
     auto defaultEngine = local_jarvis::asr::createDefaultAsrEngine();
     if (!expect(defaultEngine->engineName() == "Stub", "LOCAL_JARVIS_ENABLE_WHISPER=OFF should build the Stub backend.")) {
+        return EXIT_FAILURE;
+    }
+
+    auto explicitStub = local_jarvis::asr::createAsrEngine(local_jarvis::asr::AsrBackend::Stub);
+    if (!expect(explicitStub && explicitStub->engineName() == "Stub", "Explicit Stub backend should always be available.")) {
+        return EXIT_FAILURE;
+    }
+#if !LOCAL_JARVIS_ENABLE_WHISPER
+    auto disabledWhisper = local_jarvis::asr::createAsrEngine(local_jarvis::asr::AsrBackend::Whisper);
+    if (!expect(!disabledWhisper, "Whisper backend should be unavailable when LOCAL_JARVIS_ENABLE_WHISPER=OFF.")) {
+        return EXIT_FAILURE;
+    }
+#endif
+
+    const std::vector<float> ramp { -1.0F, -0.5F, 0.0F, 0.5F, 1.0F };
+    const auto sameRate = local_jarvis::asr::resampleToWhisperRate(ramp, local_jarvis::asr::kWhisperSampleRate);
+    if (!expect(sameRate == ramp, "Whisper conversion should preserve same-rate normalized samples.")) {
+        return EXIT_FAILURE;
+    }
+    const auto downsampled = local_jarvis::asr::resampleToWhisperRate(samples(48000, 0.25F), 48000);
+    if (!expect(downsampled.size() >= 15900 && downsampled.size() <= 16100, "Whisper conversion should resample 48 kHz audio to about 16 kHz.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(local_jarvis::asr::isProbablySilent(samples(16000, 0.0F)), "Whisper conversion should classify zero buffers as silent.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(!local_jarvis::asr::isProbablySilent(samples(16000, 0.1F)), "Whisper conversion should keep audible synthetic samples.")) {
         return EXIT_FAILURE;
     }
 

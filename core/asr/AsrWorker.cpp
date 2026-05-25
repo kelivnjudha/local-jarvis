@@ -24,17 +24,11 @@ bool AsrWorker::start(const std::string &modelPath)
         if (!m_engine) {
             m_status = AsrStatus::Error;
             m_lastError = "No ASR engine is available.";
+            return false;
         }
-    }
-
-    if (!m_engine) {
-        publishStatus(AsrStatus::Error, "No ASR engine is available.");
-        return false;
-    }
-
-    if (!m_engine->isInitialized() && !m_engine->initialize(modelPath)) {
-        publishStatus(AsrStatus::Error, "ASR engine initialization failed.");
-        return false;
+        if (!modelPath.empty()) {
+            m_config.modelPath = modelPath;
+        }
     }
 
     {
@@ -42,13 +36,13 @@ bool AsrWorker::start(const std::string &modelPath)
         m_stopRequested = false;
         m_running = true;
         m_lastError.clear();
-        m_status = AsrStatus::Ready;
+        m_status = AsrStatus::Loading;
     }
 
     m_worker = std::thread([this]() {
         workerLoop();
     });
-    publishStatus(AsrStatus::Ready, "ASR worker ready.");
+    publishStatus(AsrStatus::Loading, "ASR worker loading.");
     return true;
 }
 
@@ -78,6 +72,23 @@ void AsrWorker::stop()
     publishStatus(AsrStatus::Disabled, "ASR worker stopped.");
 }
 
+void AsrWorker::setEngine(std::unique_ptr<AsrEngine> engine)
+{
+    stop();
+    std::lock_guard lock(m_mutex);
+    m_engine = std::move(engine);
+    m_chunksQueued = 0;
+    m_chunksProcessed = 0;
+    m_lastError.clear();
+    m_status = m_engine ? AsrStatus::Disabled : AsrStatus::Error;
+}
+
+void AsrWorker::setConfig(const AsrEngineConfig &config)
+{
+    std::lock_guard lock(m_mutex);
+    m_config = config;
+}
+
 void AsrWorker::enqueueChunk(const AsrInputChunk &chunk)
 {
     {
@@ -97,7 +108,11 @@ void AsrWorker::setListening(bool listening)
 {
     {
         std::lock_guard lock(m_mutex);
-        if (!m_running || m_status == AsrStatus::Processing || m_status == AsrStatus::Error || !m_queue.empty()) {
+        if (!m_running
+            || m_status == AsrStatus::Loading
+            || m_status == AsrStatus::Processing
+            || m_status == AsrStatus::Error
+            || !m_queue.empty()) {
             return;
         }
         m_status = listening ? AsrStatus::Listening : AsrStatus::Ready;
@@ -142,6 +157,30 @@ bool AsrWorker::isRunning() const
 
 void AsrWorker::workerLoop()
 {
+    AsrEngineConfig config;
+    {
+        std::lock_guard lock(m_mutex);
+        config = m_config;
+    }
+
+    m_engine->configure(config);
+    if (!m_engine->isInitialized() && !m_engine->initialize(config.modelPath)) {
+        const std::string error = m_engine->lastError().empty()
+            ? "ASR engine initialization failed."
+            : m_engine->lastError();
+        {
+            std::lock_guard lock(m_mutex);
+            m_queue.clear();
+            m_running = false;
+            m_lastError = error;
+            m_status = AsrStatus::Error;
+        }
+        publishStatus(AsrStatus::Error, error);
+        return;
+    }
+
+    publishStatus(AsrStatus::Ready, "ASR worker ready.");
+
     while (true) {
         AsrInputChunk chunk;
         {
@@ -167,7 +206,9 @@ void AsrWorker::workerLoop()
                 ++m_chunksProcessed;
                 m_lastError.clear();
                 m_status = m_queue.empty() ? AsrStatus::Listening : AsrStatus::Processing;
-                segmentCallback = m_segmentCallback;
+                if (!result.text.empty()) {
+                    segmentCallback = m_segmentCallback;
+                }
             }
             if (segmentCallback) {
                 segmentCallback(result.segment);

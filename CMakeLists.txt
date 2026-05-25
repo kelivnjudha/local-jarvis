@@ -14,11 +14,15 @@ option(LOCAL_JARVIS_BUILD_TESTS "Build Local Jarvis tests" ON)
 option(LOCAL_JARVIS_BUILD_DESKTOP "Build the Qt desktop application" ON)
 option(LOCAL_JARVIS_ENABLE_WHISPER "Enable local whisper.cpp ASR integration hooks" OFF)
 
-set(LOCAL_JARVIS_WHISPER_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/whisper.cpp"
-    CACHE PATH
-    "Path to a local whisper.cpp checkout"
-)
+if(DEFINED LOCAL_JARVIS_WHISPER_SOURCE_DIR AND NOT DEFINED LOCAL_JARVIS_WHISPER_CPP_DIR)
+    set(LOCAL_JARVIS_WHISPER_CPP_DIR "${LOCAL_JARVIS_WHISPER_SOURCE_DIR}" CACHE PATH "Path to a local whisper.cpp checkout")
+else()
+    set(LOCAL_JARVIS_WHISPER_CPP_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/whisper.cpp"
+        CACHE PATH
+        "Path to a local whisper.cpp checkout"
+    )
+endif()
 
 find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -48,10 +52,12 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/audio/DummyAudioCapture.cpp
     core/audio/MicrophoneCapture.cpp
     core/asr/AudioChunkBuffer.cpp
+    core/asr/WhisperAudioConversion.cpp
     core/screen/ScreenCapture.cpp
     core/asr/AsrEngine.cpp
     core/asr/AsrEngineFactory.cpp
     core/asr/AsrWorker.cpp
+    core/asr/StubAsrEngine.cpp
     core/ocr/OcrEngine.cpp
     core/llm/LlmEngine.cpp
     core/storage/Storage.cpp
@@ -64,16 +70,12 @@ if(LOCAL_JARVIS_ENABLE_WHISPER)
         core/asr/WhisperAsrEngine.cpp
     )
 
-    if(NOT EXISTS "${LOCAL_JARVIS_WHISPER_SOURCE_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR "LOCAL_JARVIS_ENABLE_WHISPER is ON, but whisper.cpp was not found at ${LOCAL_JARVIS_WHISPER_SOURCE_DIR}. Set LOCAL_JARVIS_WHISPER_SOURCE_DIR to a local whisper.cpp checkout or configure with LOCAL_JARVIS_ENABLE_WHISPER=OFF.")
+    if(NOT EXISTS "${LOCAL_JARVIS_WHISPER_CPP_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "LOCAL_JARVIS_ENABLE_WHISPER is ON, but whisper.cpp was not found at LOCAL_JARVIS_WHISPER_CPP_DIR='${LOCAL_JARVIS_WHISPER_CPP_DIR}'. Set -DLOCAL_JARVIS_WHISPER_CPP_DIR=C:/path/to/whisper.cpp or configure with LOCAL_JARVIS_ENABLE_WHISPER=OFF.")
     endif()
 
-    add_subdirectory("${LOCAL_JARVIS_WHISPER_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/whisper.cpp" EXCLUDE_FROM_ALL)
+    add_subdirectory("${LOCAL_JARVIS_WHISPER_CPP_DIR}" "${CMAKE_BINARY_DIR}/third_party/whisper.cpp" EXCLUDE_FROM_ALL)
     set(LOCAL_JARVIS_WHISPER_AVAILABLE TRUE)
-else()
-    list(APPEND LOCAL_JARVIS_CORE_SOURCES
-        core/asr/StubAsrEngine.cpp
-    )
 endif()
 
 if(WIN32)

@@ -35,38 +35,20 @@ int main()
 
     PrivacyManager privacy;
     auto asrEngine = local_jarvis::asr::createDefaultAsrEngine();
-#if LOCAL_JARVIS_ENABLE_WHISPER
-    if (asrEngine->engineName() != "whisper.cpp stub") {
-        std::cerr << "Whisper build flag should select WhisperAsrEngine.\n";
-        return EXIT_FAILURE;
-    }
-#else
     if (asrEngine->engineName() != "Stub") {
         std::cerr << "Default ASR engine should be stub.\n";
         return EXIT_FAILURE;
     }
-#endif
 
     if (!asrEngine->initialize("")) {
-#if LOCAL_JARVIS_ENABLE_WHISPER
-        // Whisper stub requires an explicit model path before it reports initialized.
-#else
         std::cerr << "Stub ASR engine should initialize without a model path.\n";
         return EXIT_FAILURE;
-#endif
     }
     const auto asrResult = asrEngine->transcribePcm(PcmAudioBuffer {});
-#if LOCAL_JARVIS_ENABLE_WHISPER
-    if (asrResult.ok || !asrResult.text.empty()) {
-        std::cerr << "Whisper placeholder must not produce transcripts yet.\n";
-        return EXIT_FAILURE;
-    }
-#else
     if (!asrResult.ok || asrResult.text != "Stub transcript chunk 1") {
         std::cerr << "Stub ASR should produce deterministic local transcripts.\n";
         return EXIT_FAILURE;
     }
-#endif
     asrEngine->shutdown();
 
     const auto captureStatus = privacy.captureStatus();

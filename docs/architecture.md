@@ -11,8 +11,8 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 - `core/session`: Starts and stops local sessions, emits lifecycle events, and records session IDs.
 - `core/storage`: Owns the SQLite connection, schema creation, and session persistence.
 - `core/privacy`: Tracks explicit capture permissions and exposes capture status.
-- `core/audio` and `core/screen`: Cross-platform interfaces with OS-specific placeholder source files. `DummyAudioCapture` generates fake transcript events for testing.
-- `core/asr`, `core/ocr`, and `core/llm`: Local processing boundaries for future engines. ASR defaults to `StubAsrEngine`; whisper.cpp hooks are optional behind `LOCAL_JARVIS_ENABLE_WHISPER`.
+- `core/audio` and `core/screen`: Cross-platform interfaces. Windows microphone capture is implemented through explicit user action; screen and system-audio capture remain out of scope.
+- `core/asr`, `core/ocr`, and `core/llm`: Local processing boundaries. ASR defaults to `StubAsrEngine`; whisper.cpp support is optional behind `LOCAL_JARVIS_ENABLE_WHISPER`.
 - `core/logging`: Minimal process-local lifecycle logging.
 
 ## Session Flow
@@ -24,11 +24,9 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 5. The user clicks Stop Session.
 6. `Storage` updates `ended_at`.
 
-No audio or screen data is captured in this scaffold.
+Microphone capture is explicit and visible. Raw audio is kept in memory for diagnostics/ASR only and is not written to disk. Screen capture and system audio capture remain disabled/out of scope.
 
-Dummy transcript generation is available only for testing the session, UI, and storage path. It starts after a session is active and the relevant `PrivacyManager` permission is enabled.
-
-Local ASR is prepared as an interface only. No cloud ASR or background upload path exists. Future ASR work must run only during active user-started sessions.
+Dummy transcript generation is available for testing the session, UI, and storage path. Stub ASR can also generate deterministic local transcript segments. Real Whisper ASR is optional, local-only, and stores transcript text only during active user-started sessions.
 
 ## Local AI
 

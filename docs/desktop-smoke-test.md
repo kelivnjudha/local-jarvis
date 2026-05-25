@@ -12,6 +12,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
 - Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
+- Confirm the Local ASR section renders Whisper settings: model path, Browse Model, language, translate toggle, max threads, and Whisper status.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the caption bubble appears near the companion when captions are enabled.
 - Confirm the companion shows the current mode's outfit/accessory labels.
@@ -126,6 +127,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 
 - Confirm ASR is OFF by default unless the developer previously enabled it.
 - Confirm the ASR backend shows Stub when `LOCAL_JARVIS_ENABLE_WHISPER=OFF`.
+- Confirm Whisper appears unavailable when `LOCAL_JARVIS_ENABLE_WHISPER=OFF`.
 - Enable ASR without enabling the microphone.
 - Confirm ASR status is visible and no microphone capture starts automatically.
 - Run Test Mic Level with ASR enabled.
@@ -145,6 +147,27 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the app exits cleanly.
 - Confirm no raw audio files are created in the repo, build directories, or app data.
 - Confirm privacy events are written for ASR enable, disable, chunk processed, and error cases when applicable.
+
+## Whisper ASR Manual Check
+
+Only run this section when Local Jarvis is built with `LOCAL_JARVIS_ENABLE_WHISPER=ON`, `LOCAL_JARVIS_WHISPER_CPP_DIR` points to a local `whisper.cpp` checkout, and a local model file is available.
+
+- Select ASR backend Whisper.
+- Select a local model file with Browse Model.
+- Choose language Auto or a known language.
+- Confirm Whisper status changes from model missing to model selected, then loading/ready after ASR starts.
+- Start a session.
+- Enable ASR.
+- Enable Microphone explicitly.
+- Speak a short phrase.
+- Confirm transcript text appears in the caption bubble.
+- Confirm the Transcript panel shows the same text.
+- Confirm SQLite stores a transcript segment with source `microphone_asr_whisper`.
+- Stop the session.
+- Confirm ASR and microphone stop cleanly.
+- Close the app.
+- Confirm no raw audio files or model files were written into the repo.
+- Confirm local events are written for `whisper_model_load_started`, `whisper_model_load_completed` or `whisper_model_load_failed`, `whisper_transcript_segment_created`, and `asr_backend_changed`.
 
 ## Regression Boundaries
 

@@ -2,6 +2,10 @@
 
 namespace local_jarvis::asr {
 
+void AsrEngine::configure(const AsrEngineConfig &)
+{
+}
+
 AsrResult AsrEngine::transcribePcm(const PcmAudioBuffer &audioBuffer)
 {
     AsrInputChunk chunk {
@@ -12,6 +16,16 @@ AsrResult AsrEngine::transcribePcm(const PcmAudioBuffer &audioBuffer)
         .isFinalChunk = true
     };
     return transcribeChunk(chunk);
+}
+
+bool AsrEngine::isReady() const
+{
+    return isInitialized();
+}
+
+std::string AsrEngine::lastError() const
+{
+    return {};
 }
 
 } // namespace local_jarvis::asr

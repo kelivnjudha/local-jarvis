@@ -7,6 +7,7 @@
 #include "companion/CompanionWindow.h"
 
 #include <QDateTime>
+#include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QMessageBox>
@@ -81,6 +82,49 @@ QString languageDisplay(const std::string &language)
         return "English";
     }
     return QString::fromStdString(language);
+}
+
+int asrBackendIndex(local_jarvis::asr::AsrBackend backend)
+{
+    return backend == local_jarvis::asr::AsrBackend::Whisper ? 1 : 0;
+}
+
+std::string whisperLanguageCodeFromIndex(int index)
+{
+    switch (index) {
+    case 1:
+        return "en";
+    case 2:
+        return "th";
+    case 3:
+        return "my";
+    case 4:
+        return "vi";
+    case 5:
+        return "zh";
+    default:
+        return "auto";
+    }
+}
+
+int whisperLanguageIndex(const std::string &language)
+{
+    if (language == "en") {
+        return 1;
+    }
+    if (language == "th") {
+        return 2;
+    }
+    if (language == "my") {
+        return 3;
+    }
+    if (language == "vi") {
+        return 4;
+    }
+    if (language == "zh") {
+        return 5;
+    }
+    return 0;
 }
 
 } // namespace
@@ -238,20 +282,62 @@ void MainWindow::buildUi()
 
     auto *asrGroup = new QGroupBox("Local ASR", central);
     auto *asrLayout = new QVBoxLayout(asrGroup);
+    m_asrBackendCombo = new QComboBox(asrGroup);
+    m_asrBackendCombo->setAccessibleName("ASR backend selector");
+    m_asrBackendCombo->addItem("Stub", "stub");
+    m_asrBackendCombo->addItem(local_jarvis::asr::whisperBackendBuildEnabled() ? "Whisper" : "Whisper (unavailable)", "whisper");
+    if (!local_jarvis::asr::whisperBackendBuildEnabled()) {
+        m_asrBackendCombo->setItemData(1, 0, Qt::UserRole - 1);
+    }
+    asrLayout->addWidget(m_asrBackendCombo);
     m_asrEnabledCheckBox = new QCheckBox("Enable local transcription", asrGroup);
     m_asrEnabledCheckBox->setAccessibleName("ASR transcription toggle");
     asrLayout->addWidget(m_asrEnabledCheckBox);
+
+    auto *whisperModelLayout = new QHBoxLayout();
+    m_whisperModelPathEdit = new QLineEdit(asrGroup);
+    m_whisperModelPathEdit->setAccessibleName("Whisper model path");
+    m_whisperModelPathEdit->setPlaceholderText("Select local ggml Whisper model file");
+    m_whisperBrowseButton = new QPushButton("Browse Model", asrGroup);
+    whisperModelLayout->addWidget(m_whisperModelPathEdit, 1);
+    whisperModelLayout->addWidget(m_whisperBrowseButton);
+    asrLayout->addLayout(whisperModelLayout);
+
+    auto *whisperOptionsLayout = new QHBoxLayout();
+    m_whisperLanguageCombo = new QComboBox(asrGroup);
+    m_whisperLanguageCombo->setAccessibleName("Whisper language");
+    m_whisperLanguageCombo->addItem("Auto", "auto");
+    m_whisperLanguageCombo->addItem("English", "en");
+    m_whisperLanguageCombo->addItem("Thai", "th");
+    m_whisperLanguageCombo->addItem("Burmese", "my");
+    m_whisperLanguageCombo->addItem("Vietnamese", "vi");
+    m_whisperLanguageCombo->addItem("Chinese", "zh");
+    m_whisperTranslateCheckBox = new QCheckBox("Translate to English", asrGroup);
+    m_whisperTranslateCheckBox->setAccessibleName("Whisper translate to English");
+    m_whisperThreadsSpinBox = new QSpinBox(asrGroup);
+    m_whisperThreadsSpinBox->setAccessibleName("Whisper max threads");
+    m_whisperThreadsSpinBox->setRange(1, 16);
+    m_whisperThreadsSpinBox->setPrefix("Threads: ");
+    whisperOptionsLayout->addWidget(m_whisperLanguageCombo);
+    whisperOptionsLayout->addWidget(m_whisperTranslateCheckBox);
+    whisperOptionsLayout->addWidget(m_whisperThreadsSpinBox);
+    whisperOptionsLayout->addStretch();
+    asrLayout->addLayout(whisperOptionsLayout);
+
     m_asrBackendLabel = new QLabel(asrGroup);
     m_asrRuntimeStatusLabel = new QLabel(asrGroup);
+    m_whisperStatusLabel = new QLabel(asrGroup);
     m_asrStatsLabel = new QLabel(asrGroup);
     m_asrLastSegmentLabel = new QLabel("Last transcript: none", asrGroup);
     m_asrErrorLabel = new QLabel(asrGroup);
     m_asrRuntimeStatusLabel->setWordWrap(true);
+    m_whisperStatusLabel->setWordWrap(true);
     m_asrStatsLabel->setWordWrap(true);
     m_asrLastSegmentLabel->setWordWrap(true);
     m_asrErrorLabel->setWordWrap(true);
     asrLayout->addWidget(m_asrBackendLabel);
     asrLayout->addWidget(m_asrRuntimeStatusLabel);
+    asrLayout->addWidget(m_whisperStatusLabel);
     asrLayout->addWidget(m_asrStatsLabel);
     asrLayout->addWidget(m_asrLastSegmentLabel);
     asrLayout->addWidget(m_asrErrorLabel);
@@ -516,8 +602,32 @@ void MainWindow::connectSignals()
         }
     });
 
+    connect(m_asrBackendCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        handleAsrBackendChanged(index);
+    });
+
     connect(m_asrEnabledCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
         setAsrEnabled(checked);
+    });
+
+    connect(m_whisperModelPathEdit, &QLineEdit::editingFinished, this, [this]() {
+        handleWhisperSettingsChanged();
+    });
+
+    connect(m_whisperBrowseButton, &QPushButton::clicked, this, [this]() {
+        browseWhisperModelPath();
+    });
+
+    connect(m_whisperLanguageCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        handleWhisperSettingsChanged();
+    });
+
+    connect(m_whisperTranslateCheckBox, &QCheckBox::toggled, this, [this](bool) {
+        handleWhisperSettingsChanged();
+    });
+
+    connect(m_whisperThreadsSpinBox, &QSpinBox::valueChanged, this, [this](int) {
+        handleWhisperSettingsChanged();
     });
 
     connect(&m_microphoneStatusTimer, &QTimer::timeout, this, [this]() {
@@ -683,21 +793,7 @@ void MainWindow::ensureSessionManager()
             refreshStatus();
         });
     });
-    if (m_asrWorker) {
-        m_asrWorker->setSegmentCallback([this](const local_jarvis::asr::AsrTranscriptSegment &segment) {
-            postToUi([this, segment]() {
-                handleAsrTranscriptSegment(segment);
-            });
-        });
-        m_asrWorker->setStatusCallback([this](local_jarvis::asr::AsrStatus status, const std::string &message) {
-            postToUi([this, status, message]() {
-                if (status == local_jarvis::asr::AsrStatus::Error) {
-                    recordAsrEvent("asr_error", message);
-                }
-                refreshStatus();
-            });
-        });
-    }
+    configureAsrWorkerCallbacks();
     m_processingQueue.setStatusCallback([this](const std::string &message) {
         postToUi([this, message]() {
             m_aiProcessingStatusLabel->setText(QString("AI processing: %1").arg(QString::fromStdString(message)));
@@ -730,13 +826,8 @@ void MainWindow::loadAudioSettings()
         activeMicrophoneCapture().selectInputDevice(selectedDevice);
     }
 
-    const bool asrEnabled = m_storage.getSetting("asr.enabled").value_or("false") == "true";
-    m_asrEnabled.store(asrEnabled);
-    if (m_asrEnabledCheckBox) {
-        const QSignalBlocker blocker(m_asrEnabledCheckBox);
-        m_asrEnabledCheckBox->setChecked(asrEnabled);
-    }
-    if (asrEnabled) {
+    loadAsrSettings();
+    if (m_asrEnabled.load()) {
         startAsrPipelineIfNeeded();
     }
 
@@ -991,6 +1082,46 @@ void MainWindow::finishMicrophoneTest()
     refreshMicrophoneRuntimeUi();
 }
 
+void MainWindow::loadAsrSettings()
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    m_asrBackend = local_jarvis::asr::asrBackendFromString(m_storage.getSetting("asr.backend").value_or("stub"));
+    if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
+        && !local_jarvis::asr::whisperBackendBuildEnabled()) {
+        m_asrBackend = local_jarvis::asr::AsrBackend::Stub;
+        m_storage.setSetting("asr.backend", "stub");
+    }
+
+    m_whisperModelPath = m_storage.getSetting("asr.whisper.model_path").value_or("");
+    m_whisperLanguage = m_storage.getSetting("asr.whisper.language").value_or("auto");
+    m_whisperTranslateToEnglish = m_storage.getSetting("asr.whisper.translate_to_english").value_or("false") == "true";
+    try {
+        m_whisperMaxThreads = std::clamp(std::stoi(m_storage.getSetting("asr.whisper.max_threads").value_or("4")), 1, 16);
+    } catch (...) {
+        m_whisperMaxThreads = 4;
+    }
+    m_asrEnabled.store(m_storage.getSetting("asr.enabled").value_or("false") == "true");
+    resetAsrWorkerForBackend();
+    refreshStatus();
+}
+
+void MainWindow::saveAsrSettings()
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    m_storage.setSetting("asr.enabled", m_asrEnabled.load() ? "true" : "false");
+    m_storage.setSetting("asr.backend", local_jarvis::asr::toString(m_asrBackend));
+    m_storage.setSetting("asr.whisper.model_path", m_whisperModelPath);
+    m_storage.setSetting("asr.whisper.language", m_whisperLanguage.empty() ? "auto" : m_whisperLanguage);
+    m_storage.setSetting("asr.whisper.translate_to_english", m_whisperTranslateToEnglish ? "true" : "false");
+    m_storage.setSetting("asr.whisper.max_threads", std::to_string(std::clamp(m_whisperMaxThreads, 1, 16)));
+}
+
 void MainWindow::setAsrEnabled(bool enabled)
 {
     if (m_asrEnabled.exchange(enabled) == enabled) {
@@ -998,9 +1129,7 @@ void MainWindow::setAsrEnabled(bool enabled)
         return;
     }
 
-    if (m_storage.isOpen()) {
-        m_storage.setSetting("asr.enabled", enabled ? "true" : "false");
-    }
+    saveAsrSettings();
 
     if (m_asrEnabledCheckBox) {
         const QSignalBlocker blocker(m_asrEnabledCheckBox);
@@ -1035,10 +1164,135 @@ void MainWindow::setAsrEnabled(bool enabled)
     applyCompanionState();
 }
 
+void MainWindow::handleAsrBackendChanged(int index)
+{
+    const auto backend = index == 1 ? local_jarvis::asr::AsrBackend::Whisper : local_jarvis::asr::AsrBackend::Stub;
+    if (backend == local_jarvis::asr::AsrBackend::Whisper
+        && !local_jarvis::asr::whisperBackendBuildEnabled()) {
+        const QSignalBlocker blocker(m_asrBackendCombo);
+        m_asrBackendCombo->setCurrentIndex(asrBackendIndex(local_jarvis::asr::AsrBackend::Stub));
+        m_asrBackend = local_jarvis::asr::AsrBackend::Stub;
+        refreshStatus();
+        return;
+    }
+
+    if (m_asrBackend == backend) {
+        return;
+    }
+
+    const bool restart = m_asrEnabled.load();
+    if (restart) {
+        stopAsrPipeline();
+    }
+
+    m_asrBackend = backend;
+    saveAsrSettings();
+    resetAsrWorkerForBackend();
+    recordAsrEvent("asr_backend_changed", "ASR backend changed to " + local_jarvis::asr::displayName(m_asrBackend) + ".");
+
+    if (restart) {
+        startAsrPipelineIfNeeded();
+    }
+    refreshStatus();
+}
+
+void MainWindow::handleWhisperSettingsChanged()
+{
+    if (m_whisperModelPathEdit) {
+        m_whisperModelPath = m_whisperModelPathEdit->text().trimmed().toStdString();
+    }
+    if (m_whisperLanguageCombo) {
+        m_whisperLanguage = whisperLanguageCodeFromIndex(m_whisperLanguageCombo->currentIndex());
+    }
+    if (m_whisperTranslateCheckBox) {
+        m_whisperTranslateToEnglish = m_whisperTranslateCheckBox->isChecked();
+    }
+    if (m_whisperThreadsSpinBox) {
+        m_whisperMaxThreads = std::clamp(m_whisperThreadsSpinBox->value(), 1, 16);
+    }
+
+    saveAsrSettings();
+    if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper && m_asrEnabled.load()) {
+        stopAsrPipeline();
+        startAsrPipelineIfNeeded();
+    }
+    refreshStatus();
+}
+
+void MainWindow::browseWhisperModelPath()
+{
+    const QString selected = QFileDialog::getOpenFileName(
+        this,
+        "Select Whisper Model",
+        m_whisperModelPath.empty() ? QString {} : QString::fromStdString(m_whisperModelPath),
+        "Whisper ggml models (*.bin *.gguf);;All files (*.*)");
+    if (selected.isEmpty()) {
+        return;
+    }
+    m_whisperModelPath = selected.toStdString();
+    if (m_whisperModelPathEdit) {
+        m_whisperModelPathEdit->setText(selected);
+    }
+    handleWhisperSettingsChanged();
+}
+
+void MainWindow::resetAsrWorkerForBackend()
+{
+    if (!m_asrWorker) {
+        m_asrWorker = std::make_unique<local_jarvis::asr::AsrWorker>(
+            local_jarvis::asr::createAsrEngine(m_asrBackend));
+    } else {
+        m_asrWorker->setEngine(local_jarvis::asr::createAsrEngine(m_asrBackend));
+    }
+    configureAsrWorkerCallbacks();
+}
+
+void MainWindow::configureAsrWorkerCallbacks()
+{
+    if (!m_asrWorker) {
+        return;
+    }
+
+    m_asrWorker->setSegmentCallback([this](const local_jarvis::asr::AsrTranscriptSegment &segment) {
+        postToUi([this, segment]() {
+            handleAsrTranscriptSegment(segment);
+        });
+    });
+    m_asrWorker->setStatusCallback([this](local_jarvis::asr::AsrStatus status, const std::string &message) {
+        postToUi([this, status, message]() {
+            if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper) {
+                if (status == local_jarvis::asr::AsrStatus::Ready && m_whisperLoadInProgress) {
+                    m_whisperLoadInProgress = false;
+                    if (m_storage.isOpen()) {
+                        m_storage.addModelEvent("whisper_model_load_completed", std::filesystem::path(m_whisperModelPath).filename().string(), "Whisper model loaded locally.");
+                    }
+                } else if (status == local_jarvis::asr::AsrStatus::Error && m_whisperLoadInProgress) {
+                    m_whisperLoadInProgress = false;
+                    if (m_storage.isOpen()) {
+                        m_storage.addModelEvent("whisper_model_load_failed", std::filesystem::path(m_whisperModelPath).filename().string(), message);
+                    }
+                }
+            }
+            if (status == local_jarvis::asr::AsrStatus::Error) {
+                recordAsrEvent("asr_error", message);
+            }
+            refreshStatus();
+        });
+    });
+}
+
 void MainWindow::startAsrPipelineIfNeeded()
 {
     if (!m_asrEnabled.load() || !m_asrWorker) {
         return;
+    }
+
+    m_asrWorker->setConfig(currentAsrConfig());
+    if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper) {
+        m_whisperLoadInProgress = true;
+        if (m_storage.isOpen()) {
+            m_storage.addModelEvent("whisper_model_load_started", std::filesystem::path(m_whisperModelPath).filename().string(), "Loading local Whisper model.");
+        }
     }
 
     if (!m_asrWorker->start()) {
@@ -1114,7 +1368,7 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
         .endMs = segment.endMs,
         .speaker = segment.speaker,
         .text = segment.text,
-        .source = asrBackendText().contains("Whisper") ? "microphone_asr_whisper" : "microphone_asr_stub"
+        .source = currentAsrTranscriptSource()
     });
 
     if (m_asrLastSegmentLabel) {
@@ -1126,14 +1380,13 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
 
     const auto currentSessionId = m_sessionManager ? m_sessionManager->currentSessionId() : std::nullopt;
     if (segment.isFinal && currentSessionId.has_value() && *currentSessionId == segment.sessionId) {
-        const auto source = asrBackendText().contains("Whisper") ? "microphone_asr_whisper" : "microphone_asr_stub";
         const auto storedId = m_storage.addTranscriptSegment(local_jarvis::storage::TranscriptSegmentInput {
             .sessionId = segment.sessionId,
             .startMs = segment.startMs,
             .endMs = segment.endMs,
             .speaker = segment.speaker,
             .text = segment.text,
-            .source = source
+            .source = currentAsrTranscriptSource()
         });
         if (!storedId.has_value()) {
             recordAsrEvent("asr_error", "Failed to store ASR transcript segment: " + m_storage.lastError(), segment.sessionId);
@@ -1141,6 +1394,12 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
     }
 
     recordAsrEvent("asr_chunk_processed", segment.text, segment.sessionId);
+    if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper && m_storage.isOpen()) {
+        m_storage.addModelEvent(
+            "whisper_transcript_segment_created",
+            std::filesystem::path(m_whisperModelPath).filename().string(),
+            "Created local Whisper transcript segment for active session.");
+    }
     setCompanionAnimation(local_jarvis::companion::AnimationState::TakingNote);
     refreshStatus();
 }
@@ -1255,15 +1514,11 @@ QString MainWindow::microphoneDiagnosticsText() const
 
 QString MainWindow::asrBackendText() const
 {
-    if (!m_asrWorker) {
-        return "Unavailable";
+    if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
+        && !local_jarvis::asr::whisperBackendBuildEnabled()) {
+        return "Whisper unavailable";
     }
-
-#if LOCAL_JARVIS_ENABLE_WHISPER
-    return QString("%1").arg(QString::fromStdString(m_asrWorker->engineName()));
-#else
-    return QString("%1").arg(QString::fromStdString(m_asrWorker->engineName()));
-#endif
+    return QString::fromStdString(local_jarvis::asr::displayName(m_asrBackend));
 }
 
 QString MainWindow::asrStatusText() const
@@ -1272,6 +1527,61 @@ QString MainWindow::asrStatusText() const
         return "Disabled";
     }
     return QString::fromStdString(local_jarvis::asr::toString(m_asrWorker->stats().status));
+}
+
+QString MainWindow::whisperStatusText() const
+{
+    if (!local_jarvis::asr::whisperBackendBuildEnabled()) {
+        return "Whisper status: unavailable. Build with LOCAL_JARVIS_ENABLE_WHISPER=ON and set LOCAL_JARVIS_WHISPER_CPP_DIR.";
+    }
+    if (m_asrBackend != local_jarvis::asr::AsrBackend::Whisper) {
+        return "Whisper status: disabled";
+    }
+    if (m_whisperModelPath.empty()) {
+        return "Whisper status: model missing";
+    }
+    if (!std::filesystem::exists(std::filesystem::path(m_whisperModelPath))) {
+        return "Whisper status: model path not found";
+    }
+    if (!m_asrWorker) {
+        return "Whisper status: unavailable";
+    }
+    const auto stats = m_asrWorker->stats();
+    if (stats.status == local_jarvis::asr::AsrStatus::Loading) {
+        return "Whisper status: loading";
+    }
+    if (stats.status == local_jarvis::asr::AsrStatus::Processing) {
+        return "Whisper status: transcribing";
+    }
+    if (stats.status == local_jarvis::asr::AsrStatus::Ready || stats.status == local_jarvis::asr::AsrStatus::Listening) {
+        return "Whisper status: ready";
+    }
+    if (stats.status == local_jarvis::asr::AsrStatus::Error) {
+        return "Whisper status: error";
+    }
+    return "Whisper status: model selected";
+}
+
+local_jarvis::asr::AsrBackend MainWindow::selectedAsrBackend() const
+{
+    return m_asrBackend;
+}
+
+local_jarvis::asr::AsrEngineConfig MainWindow::currentAsrConfig() const
+{
+    return local_jarvis::asr::AsrEngineConfig {
+        .modelPath = m_asrBackend == local_jarvis::asr::AsrBackend::Whisper ? m_whisperModelPath : std::string {},
+        .language = m_whisperLanguage.empty() ? "auto" : m_whisperLanguage,
+        .translateToEnglish = m_whisperTranslateToEnglish,
+        .maxThreads = std::clamp(m_whisperMaxThreads, 1, 16)
+    };
+}
+
+std::string MainWindow::currentAsrTranscriptSource() const
+{
+    return m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
+        ? "microphone_asr_whisper"
+        : "microphone_asr_stub";
 }
 
 bool MainWindow::sessionActive() const
@@ -1338,6 +1648,41 @@ void MainWindow::refreshStatus()
 
     const auto asrStats = m_asrWorker ? m_asrWorker->stats() : local_jarvis::asr::AsrWorkerStats {};
     const QString asrEngineName = asrBackendText();
+    if (m_asrBackendCombo) {
+        const QSignalBlocker backendBlocker(m_asrBackendCombo);
+        m_asrBackendCombo->setCurrentIndex(asrBackendIndex(m_asrBackend));
+    }
+    if (m_whisperModelPathEdit) {
+        const QSignalBlocker pathBlocker(m_whisperModelPathEdit);
+        m_whisperModelPathEdit->setText(QString::fromStdString(m_whisperModelPath));
+        const bool whisperControlsEnabled = local_jarvis::asr::whisperBackendBuildEnabled()
+            && m_asrBackend == local_jarvis::asr::AsrBackend::Whisper;
+        m_whisperModelPathEdit->setEnabled(whisperControlsEnabled);
+        if (m_whisperBrowseButton) {
+            m_whisperBrowseButton->setEnabled(whisperControlsEnabled);
+        }
+        if (m_whisperLanguageCombo) {
+            m_whisperLanguageCombo->setEnabled(whisperControlsEnabled);
+        }
+        if (m_whisperTranslateCheckBox) {
+            m_whisperTranslateCheckBox->setEnabled(whisperControlsEnabled);
+        }
+        if (m_whisperThreadsSpinBox) {
+            m_whisperThreadsSpinBox->setEnabled(whisperControlsEnabled);
+        }
+    }
+    if (m_whisperLanguageCombo) {
+        const QSignalBlocker languageBlocker(m_whisperLanguageCombo);
+        m_whisperLanguageCombo->setCurrentIndex(whisperLanguageIndex(m_whisperLanguage));
+    }
+    if (m_whisperTranslateCheckBox) {
+        const QSignalBlocker translateBlocker(m_whisperTranslateCheckBox);
+        m_whisperTranslateCheckBox->setChecked(m_whisperTranslateToEnglish);
+    }
+    if (m_whisperThreadsSpinBox) {
+        const QSignalBlocker threadsBlocker(m_whisperThreadsSpinBox);
+        m_whisperThreadsSpinBox->setValue(std::clamp(m_whisperMaxThreads, 1, 16));
+    }
     m_asrStatusLabel->setText(QString("ASR: %1 | %2")
         .arg(asrEngineName, QString::fromStdString(local_jarvis::asr::toString(asrStats.status))));
     if (m_asrBackendLabel) {
@@ -1347,6 +1692,9 @@ void MainWindow::refreshStatus()
         m_asrRuntimeStatusLabel->setText(QString("ASR status: %1 | Toggle: %2")
             .arg(QString::fromStdString(local_jarvis::asr::toString(asrStats.status)),
                  m_asrEnabled.load() ? "ON" : "OFF"));
+    }
+    if (m_whisperStatusLabel) {
+        m_whisperStatusLabel->setText(whisperStatusText());
     }
     if (m_asrStatsLabel) {
         m_asrStatsLabel->setText(QString("Chunks queued: %1 | processed: %2 | pending: %3")

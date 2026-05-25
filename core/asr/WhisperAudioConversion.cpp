@@ -1,0 +1,69 @@
+#include "WhisperAudioConversion.h"
+
+#include "audio/AudioLevelMeter.h"
+
+#include <algorithm>
+#include <cmath>
+
+namespace local_jarvis::asr {
+
+std::vector<float> resampleToWhisperRate(
+    std::span<const float> monoSamples,
+    int inputSampleRate,
+    int outputSampleRate)
+{
+    if (monoSamples.empty() || inputSampleRate <= 0 || outputSampleRate <= 0) {
+        return {};
+    }
+
+    if (inputSampleRate == outputSampleRate) {
+        std::vector<float> copied(monoSamples.begin(), monoSamples.end());
+        for (auto &sample : copied) {
+            sample = std::clamp(sample, -1.0F, 1.0F);
+        }
+        return copied;
+    }
+
+    // MVP resampler: linear interpolation is good enough for local scaffold
+    // verification. Replace with a higher-quality resampler before ASR quality
+    // work depends on this path.
+    const double ratio = static_cast<double>(outputSampleRate) / static_cast<double>(inputSampleRate);
+    const auto outputCount = static_cast<std::size_t>(
+        std::max(1.0, std::round(static_cast<double>(monoSamples.size()) * ratio)));
+
+    std::vector<float> output;
+    output.reserve(outputCount);
+    for (std::size_t index = 0; index < outputCount; ++index) {
+        const double sourcePosition = static_cast<double>(index) / ratio;
+        const auto lower = static_cast<std::size_t>(std::floor(sourcePosition));
+        const auto upper = std::min<std::size_t>(lower + 1, monoSamples.size() - 1);
+        const double fraction = sourcePosition - static_cast<double>(lower);
+        const float sample = static_cast<float>(
+            (static_cast<double>(monoSamples[lower]) * (1.0 - fraction))
+            + (static_cast<double>(monoSamples[upper]) * fraction));
+        output.push_back(std::clamp(sample, -1.0F, 1.0F));
+    }
+    return output;
+}
+
+std::vector<float> prepareWhisperSamples(const AsrInputChunk &chunk)
+{
+    const int channels = std::max(1, chunk.channels);
+    auto monoSamples = audio::AudioLevelMeter::mixInterleavedToMono(chunk.samples, channels);
+    return resampleToWhisperRate(monoSamples, chunk.sampleRate, kWhisperSampleRate);
+}
+
+double normalizedRms(std::span<const float> samples)
+{
+    return audio::AudioLevelMeter::calculateRms(samples);
+}
+
+bool isProbablySilent(std::span<const float> samples, double threshold)
+{
+    if (samples.empty()) {
+        return true;
+    }
+    return normalizedRms(samples) <= threshold;
+}
+
+} // namespace local_jarvis::asr

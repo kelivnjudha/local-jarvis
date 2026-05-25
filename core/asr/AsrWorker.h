@@ -35,6 +35,8 @@ public:
 
     [[nodiscard]] bool start(const std::string &modelPath = {});
     void stop();
+    void setEngine(std::unique_ptr<AsrEngine> engine);
+    void setConfig(const AsrEngineConfig &config);
     void enqueueChunk(const AsrInputChunk &chunk);
     void setListening(bool listening);
 
@@ -50,6 +52,7 @@ private:
     void publishStatus(AsrStatus status, const std::string &message);
 
     std::unique_ptr<AsrEngine> m_engine;
+    AsrEngineConfig m_config;
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
     std::deque<AsrInputChunk> m_queue;
