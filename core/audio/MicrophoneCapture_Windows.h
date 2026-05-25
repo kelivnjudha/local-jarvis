@@ -1,26 +1,22 @@
 #pragma once
 
+#include "AudioLevelMeter.h"
 #include "MicrophoneCapture.h"
-#include "privacy/PrivacyManager.h"
 
-#include <chrono>
 #include <condition_variable>
-#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
 
 namespace local_jarvis::audio {
 
-class DummyAudioCapture final : public MicrophoneCapture {
+class WindowsMicrophoneCapture final : public MicrophoneCapture {
 public:
-    explicit DummyAudioCapture(
-        const privacy::PrivacyManager &privacyManager,
-        std::chrono::milliseconds interval = std::chrono::seconds(3));
-    ~DummyAudioCapture() override;
+    explicit WindowsMicrophoneCapture(const privacy::PrivacyManager &privacyManager);
+    ~WindowsMicrophoneCapture() override;
 
-    DummyAudioCapture(const DummyAudioCapture &) = delete;
-    DummyAudioCapture &operator=(const DummyAudioCapture &) = delete;
+    WindowsMicrophoneCapture(const WindowsMicrophoneCapture &) = delete;
+    WindowsMicrophoneCapture &operator=(const WindowsMicrophoneCapture &) = delete;
 
     [[nodiscard]] std::vector<AudioInputDevice> listInputDevices() override;
     bool selectInputDevice(const std::string &deviceId) override;
@@ -36,26 +32,23 @@ public:
     [[nodiscard]] std::string lastError() const override;
 
 private:
-    void startWorkerIfNeeded();
-    void stopWorkerIfIdle();
-    void stopWorker();
-    void workerLoop();
-    void emitTranscript(bool microphoneActive, bool systemAudioActive);
+    void captureLoop();
+    void completeStart(bool ok, const std::string &error);
+    [[nodiscard]] bool stopRequested() const;
+    void setLastError(const std::string &error);
 
     const privacy::PrivacyManager &m_privacyManager;
-    std::chrono::milliseconds m_interval;
-
     mutable std::mutex m_mutex;
-    std::condition_variable m_condition;
+    std::condition_variable m_startCondition;
     std::thread m_worker;
+    AudioLevelMeter m_levelMeter;
+    std::string m_selectedDeviceId;
+    std::string m_lastError;
+    TranscriptCallback m_transcriptCallback;
     bool m_microphoneActive = false;
     bool m_systemAudioActive = false;
     bool m_stopRequested = false;
-    std::int64_t m_nextStartMs = 0;
-    std::uint64_t m_sequence = 0;
-    std::string m_selectedDeviceId = "dummy-microphone";
-    std::string m_lastError;
-    TranscriptCallback m_transcriptCallback;
+    bool m_startCompleted = false;
 };
 
 } // namespace local_jarvis::audio

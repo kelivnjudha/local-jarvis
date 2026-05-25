@@ -63,13 +63,15 @@ void AssistantPanelWindow::setCallbacks(
     std::function<void()> settingsCallback,
     std::function<void()> openFullAppCallback,
     std::function<void()> closeCallback,
-    std::function<void()> panelActionCallback)
+    std::function<void()> panelActionCallback,
+    std::function<void(bool)> microphoneToggleCallback)
 {
     m_changedCallback = std::move(changedCallback);
     m_settingsCallback = std::move(settingsCallback);
     m_openFullAppCallback = std::move(openFullAppCallback);
     m_closeCallback = std::move(closeCallback);
     m_panelActionCallback = std::move(panelActionCallback);
+    m_microphoneToggleCallback = std::move(microphoneToggleCallback);
 }
 
 void AssistantPanelWindow::buildUi()
@@ -109,7 +111,8 @@ void AssistantPanelWindow::buildUi()
     m_captionsCheck = new QCheckBox("Captions", this);
     m_showSpeakerCheck = new QCheckBox("Show speaker", this);
     m_translationCheck = new QCheckBox("Translation", this);
-    m_microphoneCheck = new QCheckBox("Microphone placeholder", this);
+    m_microphoneCheck = new QCheckBox("Microphone", this);
+    m_microphoneCheck->setAccessibleName("Assistant microphone toggle");
     rootLayout->addWidget(m_captionsCheck);
     rootLayout->addWidget(m_showSpeakerCheck);
     rootLayout->addWidget(m_translationCheck);
@@ -181,7 +184,11 @@ void AssistantPanelWindow::connectSignals()
     });
 
     connect(m_microphoneCheck, &QCheckBox::toggled, this, [this](bool checked) {
-        m_companionManager.setMicrophoneEnabled(checked);
+        if (m_microphoneToggleCallback) {
+            m_microphoneToggleCallback(checked);
+        } else {
+            m_companionManager.setMicrophoneEnabled(checked);
+        }
         if (m_changedCallback) {
             m_changedCallback();
         }

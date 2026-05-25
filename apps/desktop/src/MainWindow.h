@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -25,6 +26,7 @@
 #include "ai/OllamaClient.h"
 #include "asr/AsrEngine.h"
 #include "audio/DummyAudioCapture.h"
+#include "audio/MicrophoneCapture.h"
 #include "caption/CaptionManager.h"
 #include "caption/DummyCaptionSource.h"
 #include "companion/CompanionManager.h"
@@ -50,7 +52,20 @@ private:
     void connectSignals();
     void initializeStorage();
     void ensureSessionManager();
+    void loadAudioSettings();
+    void resetSessionManagerForAudioMode();
     void refreshStatus();
+    void refreshMicrophoneDevices();
+    void refreshMicrophoneRuntimeUi();
+    void handleAudioModeChanged(int index);
+    void handleMicrophoneDeviceChanged(int index);
+    void setMicrophoneRequested(bool enabled);
+    void stopMicrophoneForShutdown();
+    void recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details);
+    [[nodiscard]] bool sessionActive() const;
+    [[nodiscard]] bool isRealMicrophoneMode() const;
+    [[nodiscard]] local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture();
+    [[nodiscard]] const local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture() const;
     void updateSetupStatus(const local_jarvis::setup::SetupStatus &status);
     void refreshSettings();
     void initializeCompanion();
@@ -81,6 +96,11 @@ private:
     QPushButton *m_stopButton = nullptr;
     QCheckBox *m_microphoneCaptureCheckBox = nullptr;
     QCheckBox *m_systemAudioCaptureCheckBox = nullptr;
+    QComboBox *m_audioModeCombo = nullptr;
+    QComboBox *m_microphoneDeviceCombo = nullptr;
+    QPushButton *m_refreshMicrophoneDevicesButton = nullptr;
+    QProgressBar *m_microphoneLevelBar = nullptr;
+    QLabel *m_microphoneErrorLabel = nullptr;
     QLabel *m_sessionStatusLabel = nullptr;
     QLabel *m_captureStatusLabel = nullptr;
     QLabel *m_asrStatusLabel = nullptr;
@@ -122,6 +142,8 @@ private:
 
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
+    std::unique_ptr<local_jarvis::audio::MicrophoneCapture> m_realMicrophoneCapture;
+    local_jarvis::audio::MicrophoneCapture *m_activeMicrophoneCapture = nullptr;
     std::unique_ptr<local_jarvis::asr::AsrEngine> m_asrEngine;
     local_jarvis::ai::OllamaClient m_ollamaClient;
     local_jarvis::setup::SystemCheck m_systemCheck;
@@ -141,7 +163,10 @@ private:
     std::thread m_setupThread;
     std::thread m_modelPullThread;
     QTimer m_companionAnimationResetTimer;
+    QTimer m_microphoneStatusTimer;
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
+    bool m_reportedMicrophoneActive = false;
+    std::string m_lastReportedMicrophoneFailure;
 };

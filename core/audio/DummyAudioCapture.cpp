@@ -1,5 +1,6 @@
 #include "DummyAudioCapture.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 
@@ -18,9 +19,38 @@ DummyAudioCapture::~DummyAudioCapture()
     stopWorker();
 }
 
+std::vector<AudioInputDevice> DummyAudioCapture::listInputDevices()
+{
+    return {
+        AudioInputDevice {
+            .id = "dummy-microphone",
+            .displayName = "Dummy microphone",
+            .isDefault = true,
+            .isAvailable = true
+        }
+    };
+}
+
+bool DummyAudioCapture::selectInputDevice(const std::string &deviceId)
+{
+    std::lock_guard lock(m_mutex);
+    m_selectedDeviceId = deviceId.empty() ? "dummy-microphone" : deviceId;
+    return true;
+}
+
+std::string DummyAudioCapture::selectedInputDeviceId() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_selectedDeviceId;
+}
+
 bool DummyAudioCapture::startMicrophoneCapture()
 {
     if (!m_privacyManager.captureStatus().microphoneEnabled) {
+        {
+            std::lock_guard lock(m_mutex);
+            m_lastError.clear();
+        }
         stopMicrophoneCapture();
         return false;
     }
@@ -28,6 +58,7 @@ bool DummyAudioCapture::startMicrophoneCapture()
     {
         std::lock_guard lock(m_mutex);
         m_microphoneActive = true;
+        m_lastError.clear();
     }
 
     startWorkerIfNeeded();
@@ -47,6 +78,10 @@ void DummyAudioCapture::stopMicrophoneCapture()
 bool DummyAudioCapture::startSystemAudioCapture()
 {
     if (!m_privacyManager.captureStatus().systemAudioEnabled) {
+        {
+            std::lock_guard lock(m_mutex);
+            m_lastError.clear();
+        }
         stopSystemAudioCapture();
         return false;
     }
@@ -86,6 +121,23 @@ void DummyAudioCapture::setTranscriptCallback(TranscriptCallback callback)
 {
     std::lock_guard lock(m_mutex);
     m_transcriptCallback = std::move(callback);
+}
+
+double DummyAudioCapture::currentInputLevel() const
+{
+    std::lock_guard lock(m_mutex);
+    if (!m_microphoneActive) {
+        return 0.0;
+    }
+
+    const double phase = static_cast<double>(m_sequence % 6);
+    return std::clamp(0.18 + (phase * 0.05), 0.0, 1.0);
+}
+
+std::string DummyAudioCapture::lastError() const
+{
+    std::lock_guard lock(m_mutex);
+    return m_lastError;
 }
 
 void DummyAudioCapture::startWorkerIfNeeded()

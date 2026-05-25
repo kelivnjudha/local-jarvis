@@ -16,6 +16,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -94,6 +95,8 @@ MainWindow::MainWindow(QWidget *parent)
     , m_setupManager(m_storage, m_modelManager, m_ollamaClient)
     , m_processingQueue(m_storage, m_ollamaClient)
 {
+    m_realMicrophoneCapture = local_jarvis::audio::createPlatformMicrophoneCapture(m_privacyManager);
+    m_activeMicrophoneCapture = &m_audioCapture;
     buildUi();
     initializeStorage();
     initializeCompanion();
@@ -105,6 +108,8 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     m_destroying.store(true);
+    m_microphoneStatusTimer.stop();
+    stopMicrophoneForShutdown();
     m_assistantPanelWindow.reset();
     m_captionBubbleWindow.reset();
     m_companionWindow.reset();
@@ -117,6 +122,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
     m_destroying.store(true);
     m_companionAnimationResetTimer.stop();
+    m_microphoneStatusTimer.stop();
+    stopMicrophoneForShutdown();
 
     if (m_assistantPanelWindow) {
         m_assistantPanelWindow->close();
@@ -185,6 +192,33 @@ void MainWindow::buildUi()
     controlsLayout->addWidget(m_systemAudioCaptureCheckBox);
     controlsLayout->addStretch();
     rootLayout->addLayout(controlsLayout);
+
+    auto *microphoneGroup = new QGroupBox("Microphone Input", central);
+    auto *microphoneLayout = new QVBoxLayout(microphoneGroup);
+    auto *microphoneSelectorLayout = new QHBoxLayout();
+    m_audioModeCombo = new QComboBox(microphoneGroup);
+    m_audioModeCombo->setAccessibleName("Audio capture mode");
+    m_audioModeCombo->addItem("Dummy audio", "dummy");
+    m_audioModeCombo->addItem("Real microphone", "microphone");
+    m_microphoneDeviceCombo = new QComboBox(microphoneGroup);
+    m_microphoneDeviceCombo->setAccessibleName("Microphone device");
+    m_refreshMicrophoneDevicesButton = new QPushButton("Refresh Devices", microphoneGroup);
+    microphoneSelectorLayout->addWidget(m_audioModeCombo);
+    microphoneSelectorLayout->addWidget(m_microphoneDeviceCombo, 1);
+    microphoneSelectorLayout->addWidget(m_refreshMicrophoneDevicesButton);
+    microphoneLayout->addLayout(microphoneSelectorLayout);
+
+    m_microphoneLevelBar = new QProgressBar(microphoneGroup);
+    m_microphoneLevelBar->setAccessibleName("Microphone input level");
+    m_microphoneLevelBar->setRange(0, 100);
+    m_microphoneLevelBar->setValue(0);
+    m_microphoneLevelBar->setTextVisible(true);
+    microphoneLayout->addWidget(m_microphoneLevelBar);
+
+    m_microphoneErrorLabel = new QLabel(microphoneGroup);
+    m_microphoneErrorLabel->setWordWrap(true);
+    microphoneLayout->addWidget(m_microphoneErrorLabel);
+    rootLayout->addWidget(microphoneGroup);
 
     auto *statusGroup = new QGroupBox("Capture Status", central);
     auto *statusLayout = new QVBoxLayout(statusGroup);
@@ -398,20 +432,39 @@ void MainWindow::connectSignals()
     });
 
     connect(m_microphoneCaptureCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
-        m_privacyManager.setMicrophoneEnabled(checked);
-        if (m_sessionManager) {
-            m_sessionManager->syncCaptureWithPrivacy();
-        }
-        refreshStatus();
+        setMicrophoneRequested(checked);
     });
 
     connect(m_systemAudioCaptureCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        if (checked && isRealMicrophoneMode()) {
+            const QSignalBlocker blocker(m_systemAudioCaptureCheckBox);
+            m_systemAudioCaptureCheckBox->setChecked(false);
+            appendLifecycleEvent("System audio capture is outside Phase 3A scope.");
+            return;
+        }
         m_privacyManager.setSystemAudioEnabled(checked);
         if (m_sessionManager) {
             m_sessionManager->syncCaptureWithPrivacy();
         }
         refreshStatus();
     });
+
+    connect(m_audioModeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        handleAudioModeChanged(index);
+    });
+
+    connect(m_microphoneDeviceCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        handleMicrophoneDeviceChanged(index);
+    });
+
+    connect(m_refreshMicrophoneDevicesButton, &QPushButton::clicked, this, [this]() {
+        refreshMicrophoneDevices();
+    });
+
+    connect(&m_microphoneStatusTimer, &QTimer::timeout, this, [this]() {
+        refreshMicrophoneRuntimeUi();
+    });
+    m_microphoneStatusTimer.start(250);
 
     connect(m_processStudyButton, &QPushButton::clicked, this, [this]() {
         enqueueStudyProcessing();
@@ -544,6 +597,7 @@ void MainWindow::initializeStorage()
         return;
     }
 
+    loadAudioSettings();
     ensureSessionManager();
 
     appendLifecycleEvent(QString("Storage ready: %1").arg(pathText(local_jarvis::storage::Storage::defaultDatabasePath())));
@@ -555,7 +609,7 @@ void MainWindow::ensureSessionManager()
         return;
     }
 
-    m_sessionManager = std::make_unique<local_jarvis::session::SessionManager>(m_storage, m_audioCapture);
+    m_sessionManager = std::make_unique<local_jarvis::session::SessionManager>(m_storage, activeMicrophoneCapture());
     m_sessionManager->setLifecycleCallback([this](const std::string &message) {
         appendLifecycleEvent(QString::fromStdString(message));
     });
@@ -574,6 +628,254 @@ void MainWindow::ensureSessionManager()
     });
 }
 
+void MainWindow::loadAudioSettings()
+{
+    if (!m_storage.isOpen()) {
+        refreshMicrophoneDevices();
+        return;
+    }
+
+    const auto mode = m_storage.getSetting("audio.capture_mode").value_or("dummy");
+    {
+        const QSignalBlocker blocker(m_audioModeCombo);
+        m_audioModeCombo->setCurrentIndex(mode == "microphone" ? 1 : 0);
+    }
+    m_activeMicrophoneCapture = isRealMicrophoneMode() && m_realMicrophoneCapture
+        ? m_realMicrophoneCapture.get()
+        : static_cast<local_jarvis::audio::MicrophoneCapture *>(&m_audioCapture);
+
+    const auto selectedDevice = m_storage.getSetting("audio.input_device_id").value_or("");
+    if (!selectedDevice.empty()) {
+        activeMicrophoneCapture().selectInputDevice(selectedDevice);
+    }
+
+    refreshMicrophoneDevices();
+}
+
+void MainWindow::resetSessionManagerForAudioMode()
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    if (sessionActive()) {
+        return;
+    }
+
+    if (m_sessionManager) {
+        m_sessionManager.reset();
+    }
+    ensureSessionManager();
+}
+
+void MainWindow::refreshMicrophoneDevices()
+{
+    if (!m_microphoneDeviceCombo) {
+        return;
+    }
+
+    const QSignalBlocker blocker(m_microphoneDeviceCombo);
+    m_microphoneDeviceCombo->clear();
+
+    const auto devices = activeMicrophoneCapture().listInputDevices();
+    if (devices.empty()) {
+        m_microphoneDeviceCombo->addItem("No microphone devices available", "");
+        m_microphoneDeviceCombo->setEnabled(false);
+        if (m_microphoneErrorLabel) {
+            const auto error = activeMicrophoneCapture().lastError();
+            m_microphoneErrorLabel->setText(error.empty()
+                    ? "No microphone devices available."
+                    : QString::fromStdString(error));
+        }
+        return;
+    }
+
+    const std::string selectedId = activeMicrophoneCapture().selectedInputDeviceId();
+    int selectedIndex = 0;
+    for (int index = 0; index < static_cast<int>(devices.size()); ++index) {
+        const auto &device = devices[static_cast<std::size_t>(index)];
+        const QString label = QString("%1%2")
+            .arg(QString::fromStdString(device.displayName),
+                 device.isDefault ? " (default)" : "");
+        m_microphoneDeviceCombo->addItem(label, QString::fromStdString(device.id));
+        if (!selectedId.empty() && selectedId == device.id) {
+            selectedIndex = index;
+        }
+    }
+
+    m_microphoneDeviceCombo->setEnabled(true);
+    m_microphoneDeviceCombo->setCurrentIndex(selectedIndex);
+    activeMicrophoneCapture().selectInputDevice(
+        m_microphoneDeviceCombo->currentData().toString().toStdString());
+    if (m_microphoneErrorLabel) {
+        m_microphoneErrorLabel->clear();
+    }
+}
+
+void MainWindow::refreshMicrophoneRuntimeUi()
+{
+    if (!m_microphoneLevelBar) {
+        return;
+    }
+
+    const bool microphoneActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
+    const int level = static_cast<int>(std::clamp(activeMicrophoneCapture().currentInputLevel(), 0.0, 1.0) * 100.0);
+    m_microphoneLevelBar->setValue(level);
+    m_microphoneLevelBar->setFormat(microphoneActive ? QString("Mic level: %1%").arg(level) : "Mic level: OFF");
+
+    if (m_microphoneErrorLabel) {
+        const QString error = QString::fromStdString(activeMicrophoneCapture().lastError());
+        m_microphoneErrorLabel->setText(error);
+    }
+
+    if (microphoneActive != m_reportedMicrophoneActive) {
+        recordMicrophonePrivacyEvent(
+            microphoneActive ? "microphone_enabled" : "microphone_disabled",
+            microphoneActive ? "Microphone capture started." : "Microphone capture stopped.");
+        m_reportedMicrophoneActive = microphoneActive;
+        m_lastReportedMicrophoneFailure.clear();
+    }
+
+    const bool wantsMicrophone = m_privacyManager.captureStatus().microphoneEnabled
+        && m_sessionManager
+        && m_sessionManager->state() == local_jarvis::session::SessionState::Active;
+    const std::string lastError = activeMicrophoneCapture().lastError();
+    if (!microphoneActive && wantsMicrophone && !lastError.empty() && lastError != m_lastReportedMicrophoneFailure) {
+        recordMicrophonePrivacyEvent("microphone_start_failed", lastError);
+        m_lastReportedMicrophoneFailure = lastError;
+    }
+
+    if (m_companionManager.state().microphoneEnabled != microphoneActive) {
+        m_companionManager.setMicrophoneEnabled(microphoneActive);
+        if (microphoneActive && m_captionBubbleWindow) {
+            m_captionBubbleWindow->setMicrophonePlaceholderText("Mic active. Transcription will be added in the next phase.");
+        } else if (m_captionBubbleWindow) {
+            m_captionBubbleWindow->setMicrophonePlaceholderText("");
+        }
+        applyCompanionState();
+    }
+
+    refreshCompanionSettings();
+}
+
+void MainWindow::handleAudioModeChanged(int)
+{
+    if (sessionActive()) {
+        const bool activeBackendIsReal = m_realMicrophoneCapture
+            && m_activeMicrophoneCapture == m_realMicrophoneCapture.get();
+        const QSignalBlocker blocker(m_audioModeCombo);
+        m_audioModeCombo->setCurrentIndex(activeBackendIsReal ? 1 : 0);
+        QMessageBox::information(this, "Session Active", "Stop the current session before changing audio capture mode.");
+        return;
+    }
+
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    m_activeMicrophoneCapture = isRealMicrophoneMode() && m_realMicrophoneCapture
+        ? m_realMicrophoneCapture.get()
+        : static_cast<local_jarvis::audio::MicrophoneCapture *>(&m_audioCapture);
+
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("audio.capture_mode", isRealMicrophoneMode() ? "microphone" : "dummy");
+    }
+
+    if (isRealMicrophoneMode()) {
+        m_privacyManager.setSystemAudioEnabled(false);
+    }
+
+    resetSessionManagerForAudioMode();
+    refreshMicrophoneDevices();
+    refreshStatus();
+}
+
+void MainWindow::handleMicrophoneDeviceChanged(int index)
+{
+    if (index < 0 || !m_microphoneDeviceCombo || !m_microphoneDeviceCombo->isEnabled()) {
+        return;
+    }
+
+    const std::string deviceId = m_microphoneDeviceCombo->itemData(index).toString().toStdString();
+    activeMicrophoneCapture().selectInputDevice(deviceId);
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("audio.input_device_id", deviceId);
+    }
+}
+
+void MainWindow::setMicrophoneRequested(bool enabled)
+{
+    m_privacyManager.setMicrophoneEnabled(enabled);
+    if (m_sessionManager) {
+        m_sessionManager->syncCaptureWithPrivacy();
+    }
+
+    if (!enabled) {
+        m_lastReportedMicrophoneFailure.clear();
+    }
+
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
+void MainWindow::stopMicrophoneForShutdown()
+{
+    const bool wasActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    if (wasActive) {
+        recordMicrophonePrivacyEvent(
+            "microphone_disabled",
+            "Microphone capture stopped during app shutdown.");
+        m_reportedMicrophoneActive = false;
+    }
+}
+
+void MainWindow::recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details)
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    std::optional<std::string> sessionId;
+    if (m_sessionManager) {
+        sessionId = m_sessionManager->currentSessionId();
+    }
+
+    m_storage.addPrivacyEvent(local_jarvis::storage::PrivacyEventInput {
+        .sessionId = sessionId,
+        .eventType = eventType,
+        .details = details
+    });
+
+    appendLifecycleEvent(QString("%1: %2")
+        .arg(QString::fromStdString(eventType),
+             QString::fromStdString(details)));
+}
+
+bool MainWindow::sessionActive() const
+{
+    return m_sessionManager
+        && m_sessionManager->state() == local_jarvis::session::SessionState::Active;
+}
+
+bool MainWindow::isRealMicrophoneMode() const
+{
+    return m_audioModeCombo && m_audioModeCombo->currentData().toString() == "microphone";
+}
+
+local_jarvis::audio::MicrophoneCapture &MainWindow::activeMicrophoneCapture()
+{
+    if (m_activeMicrophoneCapture == nullptr) {
+        m_activeMicrophoneCapture = &m_audioCapture;
+    }
+    return *m_activeMicrophoneCapture;
+}
+
+const local_jarvis::audio::MicrophoneCapture &MainWindow::activeMicrophoneCapture() const
+{
+    if (m_activeMicrophoneCapture == nullptr) {
+        return m_audioCapture;
+    }
+    return *m_activeMicrophoneCapture;
+}
+
 void MainWindow::refreshStatus()
 {
     const bool active = m_sessionManager && m_sessionManager->state() == local_jarvis::session::SessionState::Active;
@@ -585,16 +887,25 @@ void MainWindow::refreshStatus()
         .arg(active ? "Active" : "Stopped", sessionId));
 
     const auto status = m_privacyManager.captureStatus();
-    const QString microphoneRuntime = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive()
+    const bool microphoneActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
+    const QString microphoneRuntime = microphoneActive
         ? "running"
         : "stopped";
     const QString systemAudioRuntime = m_sessionManager && m_sessionManager->isSystemAudioCaptureActive()
         ? "running"
         : "stopped";
+    const int microphoneLevel = static_cast<int>(std::clamp(activeMicrophoneCapture().currentInputLevel(), 0.0, 1.0) * 100.0);
+    const QString modeText = isRealMicrophoneMode() ? "Real microphone" : "Dummy audio";
+    const QString deviceText = m_microphoneDeviceCombo && m_microphoneDeviceCombo->isEnabled()
+        ? m_microphoneDeviceCombo->currentText()
+        : "unavailable";
 
-    m_captureStatusLabel->setText(QString("Microphone permission: %1 (%2) | System audio permission: %3 (%4) | Screen: %5")
-        .arg(enabledText(status.microphoneEnabled),
+    m_captureStatusLabel->setText(QString("Audio mode: %1 | Device: %2\nMicrophone permission: %3 (%4, level %5%) | System audio permission: %6 (%7) | Screen: %8")
+        .arg(modeText,
+             deviceText,
+             enabledText(status.microphoneEnabled),
              microphoneRuntime,
+             QString::number(microphoneLevel),
              enabledText(status.systemAudioEnabled),
              systemAudioRuntime,
              enabledText(status.screenCaptureEnabled)));
@@ -613,8 +924,13 @@ void MainWindow::refreshStatus()
     m_processStudyButton->setEnabled(active && modelReady);
     m_processMeetingButton->setEnabled(active && modelReady);
     m_processFinalSummaryButton->setEnabled(modelReady && (active || m_lastStoppedSessionId.has_value()));
-    m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
-    m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
+    {
+        const QSignalBlocker microphoneBlocker(m_microphoneCaptureCheckBox);
+        const QSignalBlocker systemAudioBlocker(m_systemAudioCaptureCheckBox);
+        m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
+        m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
+        m_systemAudioCaptureCheckBox->setEnabled(!isRealMicrophoneMode());
+    }
 }
 
 void MainWindow::updateSetupStatus(const local_jarvis::setup::SetupStatus &status)
@@ -714,6 +1030,9 @@ void MainWindow::initializeCompanion()
         },
         [this]() {
             setCompanionAnimation(local_jarvis::companion::AnimationState::Working);
+        },
+        [this](bool enabled) {
+            setMicrophoneRequested(enabled);
         });
 
     applyCompanionState();
@@ -753,14 +1072,15 @@ void MainWindow::refreshCompanionSettings()
     const auto profile = m_companionManager.visualProfile();
     m_companionStatusLabel->setText(QString(
         "Mode: %1\n"
-        "Captions: %2 (%3) | Translation: %4\n"
-        "Position: %5, %6 | Scale: %7%\n"
-        "Theme: %8 | Outfit: %9 | Accessory: %10\n"
-        "Animation: %11 | Motion: %12 | Always on top: %13")
+        "Captions: %2 (%3) | Translation: %4 | Mic: %5\n"
+        "Position: %6, %7 | Scale: %8%\n"
+        "Theme: %9 | Outfit: %10 | Accessory: %11\n"
+        "Animation: %12 | Motion: %13 | Always on top: %14")
         .arg(QString::fromStdString(profile.displayName),
              enabledText(captionState.captionsEnabled && state.captionsVisible),
              QString::fromStdString(local_jarvis::caption::displayName(captionState.captionMode)),
              enabledText(state.translationEnabled),
+             state.microphoneEnabled ? "ON" : "OFF",
              QString::number(state.anchorX),
              QString::number(state.anchorY),
              QString::number(static_cast<int>(state.companionScale * 100.0)),

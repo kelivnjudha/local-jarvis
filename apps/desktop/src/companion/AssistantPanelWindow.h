@@ -26,7 +26,8 @@ public:
         std::function<void()> settingsCallback,
         std::function<void()> openFullAppCallback,
         std::function<void()> closeCallback,
-        std::function<void()> panelActionCallback);
+        std::function<void()> panelActionCallback,
+        std::function<void(bool)> microphoneToggleCallback);
 
 private:
     void buildUi();
@@ -56,4 +57,5 @@ private:
     std::function<void()> m_openFullAppCallback;
     std::function<void()> m_closeCallback;
     std::function<void()> m_panelActionCallback;
+    std::function<void(bool)> m_microphoneToggleCallback;
 };

@@ -44,7 +44,9 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/setup/SetupManager.cpp
     core/setup/SystemCheck.cpp
     core/audio/AudioCapture.cpp
+    core/audio/AudioLevelMeter.cpp
     core/audio/DummyAudioCapture.cpp
+    core/audio/MicrophoneCapture.cpp
     core/screen/ScreenCapture.cpp
     core/asr/AsrEngine.cpp
     core/asr/AsrEngineFactory.cpp
@@ -76,6 +78,7 @@ endif()
 if(WIN32)
     list(APPEND LOCAL_JARVIS_CORE_SOURCES
         core/audio/AudioCapture_win.cpp
+        core/audio/MicrophoneCapture_Windows.cpp
         core/screen/ScreenCapture_win.cpp
     )
 elseif(APPLE)
@@ -104,7 +107,7 @@ target_link_libraries(local_jarvis_core
 )
 
 if(WIN32)
-    target_link_libraries(local_jarvis_core PRIVATE ws2_32)
+    target_link_libraries(local_jarvis_core PRIVATE ws2_32 ole32 propsys uuid)
 endif()
 
 target_compile_definitions(local_jarvis_core

@@ -1,6 +1,6 @@
 # Desktop Smoke Test
 
-Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold plus Companion Phase 1 shell only; it does not require real audio capture, screen capture, OCR, ASR, or downloaded models.
+Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold, companion shell, caption pipeline, and Phase 3A microphone foundation. It does not require system audio capture, screen capture, OCR, ASR, cloud services, or downloaded models.
 
 ## Launch
 
@@ -9,6 +9,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Setup tab renders first.
 - Confirm the Settings tab renders.
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
+- Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the caption bubble appears near the companion when captions are enabled.
 - Confirm the companion shows the current mode's outfit/accessory labels.
@@ -18,6 +19,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - With no capture permissions enabled, start a session.
 - Confirm the session starts and shows an active session ID.
 - Confirm microphone and system audio runtime state remains stopped unless explicitly enabled.
+- Confirm the default audio mode is dummy audio unless a developer explicitly selected real microphone mode.
 - Stop the session.
 - Confirm the session stops without errors.
 - Confirm raw session storage works even if the local model is unavailable.
@@ -87,9 +89,33 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Close the app while the companion, caption bubble, and assistant panel are visible.
 - Confirm no companion worker or timer touches destroyed UI.
 
+## Microphone Foundation
+
+- Confirm real microphone capture is off at app launch.
+- Click Refresh Devices.
+- Confirm the microphone list loads real Windows input devices or shows a clear unavailable message.
+- Switch Audio capture mode to Real microphone.
+- Select a microphone device if devices are available.
+- Start a session.
+- Confirm the microphone remains stopped until the Microphone checkbox or assistant panel microphone toggle is explicitly clicked.
+- Enable Microphone.
+- Confirm the Capture Status panel shows the microphone as running.
+- Confirm the input level meter moves when speaking into the selected microphone.
+- Confirm the companion switches to the Listening animation while microphone capture is active.
+- Confirm the caption bubble shows a non-transcription placeholder such as "Mic active. Transcription will be added in the next phase."
+- Disable Microphone.
+- Confirm the microphone stops cleanly and the companion returns to its fallback animation state.
+- Re-enable Microphone, then close the app while capture is active.
+- Confirm the app exits cleanly.
+- Confirm no raw audio files are created in the repo, build directories, or app data.
+- Confirm local privacy events are written for microphone start, stop, and any start failure.
+- Switch Audio capture mode back to Dummy audio.
+- Confirm dummy captions and dummy transcript/session flow still work.
+
 ## Regression Boundaries
 
 - Confirm no overlay UI appears.
-- Confirm no real microphone, system audio, or screen capture starts.
+- Confirm real microphone capture starts only after explicit user action.
+- Confirm no system audio or screen capture starts.
 - Confirm no OCR or ASR path runs.
 - Confirm all capture status remains visible in the Session tab.

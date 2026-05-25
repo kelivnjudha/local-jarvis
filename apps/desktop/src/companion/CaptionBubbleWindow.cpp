@@ -60,9 +60,19 @@ void CaptionBubbleWindow::setCaptionUpdatedCallback(std::function<void()> callba
     m_captionUpdatedCallback = std::move(callback);
 }
 
+void CaptionBubbleWindow::setMicrophonePlaceholderText(const QString &text)
+{
+    m_microphonePlaceholderText = text;
+    refreshCaptionText();
+}
+
 void CaptionBubbleWindow::refreshCaptionText()
 {
-    m_captionText = QString::fromStdString(m_captionManager.currentDisplayText());
+    if (!m_microphonePlaceholderText.trimmed().isEmpty()) {
+        m_captionText = m_microphonePlaceholderText;
+    } else {
+        m_captionText = QString::fromStdString(m_captionManager.currentDisplayText());
+    }
     if (m_captionLabel) {
         m_captionLabel->setText(m_captionText);
     }
