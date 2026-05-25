@@ -10,6 +10,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Settings tab renders.
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
+- Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the caption bubble appears near the companion when captions are enabled.
 - Confirm the companion shows the current mode's outfit/accessory labels.
@@ -96,11 +97,19 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the microphone list loads real Windows input devices or shows a clear unavailable message.
 - Switch Audio capture mode to Real microphone.
 - Select a microphone device if devices are available.
+- Click Test Mic Level.
+- Confirm microphone capture starts only after that explicit click and no session is created.
+- Confirm diagnostics update for buffers, frames, callback time, RMS, and smoothed level while the test runs.
+- Speak into the selected microphone.
+- Confirm the input level moves. If it stays at 0%, inspect diagnostics for sample format, frame count, non-zero sample count, and last error.
+- Confirm the mic test stops after 10 seconds, or click Stop Mic Test and confirm it stops cleanly.
+- Confirm privacy events are written for mic test start/stop.
 - Start a session.
 - Confirm the microphone remains stopped until the Microphone checkbox or assistant panel microphone toggle is explicitly clicked.
 - Enable Microphone.
 - Confirm the Capture Status panel shows the microphone as running.
 - Confirm the input level meter moves when speaking into the selected microphone.
+- Confirm diagnostics counters continue updating during session microphone capture.
 - Confirm the companion switches to the Listening animation while microphone capture is active.
 - Confirm the caption bubble shows a non-transcription placeholder such as "Mic active. Transcription will be added in the next phase."
 - Disable Microphone.

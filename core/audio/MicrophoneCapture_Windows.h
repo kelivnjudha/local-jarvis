@@ -29,6 +29,7 @@ public:
     [[nodiscard]] bool isSystemAudioActive() const override;
     void setTranscriptCallback(TranscriptCallback callback) override;
     [[nodiscard]] double currentInputLevel() const override;
+    [[nodiscard]] MicrophoneDiagnostics diagnostics() const override;
     [[nodiscard]] std::string lastError() const override;
 
 private:
@@ -42,6 +43,7 @@ private:
     std::condition_variable m_startCondition;
     std::thread m_worker;
     AudioLevelMeter m_levelMeter;
+    MicrophoneDiagnostics m_diagnostics;
     std::string m_selectedDeviceId;
     std::string m_lastError;
     TranscriptCallback m_transcriptCallback;

@@ -33,6 +33,7 @@ public:
     [[nodiscard]] bool isSystemAudioActive() const override;
     void setTranscriptCallback(TranscriptCallback callback) override;
     [[nodiscard]] double currentInputLevel() const override;
+    [[nodiscard]] MicrophoneDiagnostics diagnostics() const override;
     [[nodiscard]] std::string lastError() const override;
 
 private:
@@ -55,6 +56,7 @@ private:
     std::uint64_t m_sequence = 0;
     std::string m_selectedDeviceId = "dummy-microphone";
     std::string m_lastError;
+    MicrophoneDiagnostics m_diagnostics;
     TranscriptCallback m_transcriptCallback;
 };
 

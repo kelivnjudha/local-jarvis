@@ -60,8 +60,12 @@ private:
     void handleAudioModeChanged(int index);
     void handleMicrophoneDeviceChanged(int index);
     void setMicrophoneRequested(bool enabled);
+    void startMicrophoneTest();
+    void stopMicrophoneTest();
+    void finishMicrophoneTest();
     void stopMicrophoneForShutdown();
     void recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details);
+    [[nodiscard]] QString microphoneDiagnosticsText() const;
     [[nodiscard]] bool sessionActive() const;
     [[nodiscard]] bool isRealMicrophoneMode() const;
     [[nodiscard]] local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture();
@@ -99,7 +103,9 @@ private:
     QComboBox *m_audioModeCombo = nullptr;
     QComboBox *m_microphoneDeviceCombo = nullptr;
     QPushButton *m_refreshMicrophoneDevicesButton = nullptr;
+    QPushButton *m_microphoneTestButton = nullptr;
     QProgressBar *m_microphoneLevelBar = nullptr;
+    QLabel *m_microphoneDiagnosticsLabel = nullptr;
     QLabel *m_microphoneErrorLabel = nullptr;
     QLabel *m_sessionStatusLabel = nullptr;
     QLabel *m_captureStatusLabel = nullptr;
@@ -164,9 +170,12 @@ private:
     std::thread m_modelPullThread;
     QTimer m_companionAnimationResetTimer;
     QTimer m_microphoneStatusTimer;
+    QTimer m_microphoneTestTimer;
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
     bool m_reportedMicrophoneActive = false;
+    bool m_microphoneTestActive = false;
+    bool m_microphoneTestPreviousMicRequested = false;
     std::string m_lastReportedMicrophoneFailure;
 };

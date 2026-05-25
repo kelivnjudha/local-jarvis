@@ -109,6 +109,7 @@ MainWindow::~MainWindow()
 {
     m_destroying.store(true);
     m_microphoneStatusTimer.stop();
+    m_microphoneTestTimer.stop();
     stopMicrophoneForShutdown();
     m_assistantPanelWindow.reset();
     m_captionBubbleWindow.reset();
@@ -123,6 +124,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_destroying.store(true);
     m_companionAnimationResetTimer.stop();
     m_microphoneStatusTimer.stop();
+    m_microphoneTestTimer.stop();
     stopMicrophoneForShutdown();
 
     if (m_assistantPanelWindow) {
@@ -203,9 +205,11 @@ void MainWindow::buildUi()
     m_microphoneDeviceCombo = new QComboBox(microphoneGroup);
     m_microphoneDeviceCombo->setAccessibleName("Microphone device");
     m_refreshMicrophoneDevicesButton = new QPushButton("Refresh Devices", microphoneGroup);
+    m_microphoneTestButton = new QPushButton("Test Mic Level", microphoneGroup);
     microphoneSelectorLayout->addWidget(m_audioModeCombo);
     microphoneSelectorLayout->addWidget(m_microphoneDeviceCombo, 1);
     microphoneSelectorLayout->addWidget(m_refreshMicrophoneDevicesButton);
+    microphoneSelectorLayout->addWidget(m_microphoneTestButton);
     microphoneLayout->addLayout(microphoneSelectorLayout);
 
     m_microphoneLevelBar = new QProgressBar(microphoneGroup);
@@ -214,6 +218,13 @@ void MainWindow::buildUi()
     m_microphoneLevelBar->setValue(0);
     m_microphoneLevelBar->setTextVisible(true);
     microphoneLayout->addWidget(m_microphoneLevelBar);
+
+    auto *microphoneDiagnosticsTitle = new QLabel("Microphone diagnostics", microphoneGroup);
+    microphoneLayout->addWidget(microphoneDiagnosticsTitle);
+    m_microphoneDiagnosticsLabel = new QLabel(microphoneGroup);
+    m_microphoneDiagnosticsLabel->setWordWrap(true);
+    m_microphoneDiagnosticsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    microphoneLayout->addWidget(m_microphoneDiagnosticsLabel);
 
     m_microphoneErrorLabel = new QLabel(microphoneGroup);
     m_microphoneErrorLabel->setWordWrap(true);
@@ -461,10 +472,23 @@ void MainWindow::connectSignals()
         refreshMicrophoneDevices();
     });
 
+    connect(m_microphoneTestButton, &QPushButton::clicked, this, [this]() {
+        if (m_microphoneTestActive) {
+            stopMicrophoneTest();
+        } else {
+            startMicrophoneTest();
+        }
+    });
+
     connect(&m_microphoneStatusTimer, &QTimer::timeout, this, [this]() {
         refreshMicrophoneRuntimeUi();
     });
     m_microphoneStatusTimer.start(250);
+
+    connect(&m_microphoneTestTimer, &QTimer::timeout, this, [this]() {
+        finishMicrophoneTest();
+    });
+    m_microphoneTestTimer.setSingleShot(true);
 
     connect(m_processStudyButton, &QPushButton::clicked, this, [this]() {
         enqueueStudyProcessing();
@@ -718,13 +742,23 @@ void MainWindow::refreshMicrophoneRuntimeUi()
         return;
     }
 
-    const bool microphoneActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
-    const int level = static_cast<int>(std::clamp(activeMicrophoneCapture().currentInputLevel(), 0.0, 1.0) * 100.0);
+    const auto diagnostics = activeMicrophoneCapture().diagnostics();
+    const bool microphoneActive = diagnostics.captureActive;
+    const int level = static_cast<int>(std::clamp(diagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
     m_microphoneLevelBar->setValue(level);
     m_microphoneLevelBar->setFormat(microphoneActive ? QString("Mic level: %1%").arg(level) : "Mic level: OFF");
 
+    if (m_microphoneDiagnosticsLabel) {
+        m_microphoneDiagnosticsLabel->setText(microphoneDiagnosticsText());
+    }
+
+    if (m_microphoneTestButton) {
+        m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
+        m_microphoneTestButton->setEnabled(!sessionActive() || m_microphoneTestActive);
+    }
+
     if (m_microphoneErrorLabel) {
-        const QString error = QString::fromStdString(activeMicrophoneCapture().lastError());
+        const QString error = QString::fromStdString(diagnostics.lastError);
         m_microphoneErrorLabel->setText(error);
     }
 
@@ -737,9 +771,9 @@ void MainWindow::refreshMicrophoneRuntimeUi()
     }
 
     const bool wantsMicrophone = m_privacyManager.captureStatus().microphoneEnabled
-        && m_sessionManager
-        && m_sessionManager->state() == local_jarvis::session::SessionState::Active;
-    const std::string lastError = activeMicrophoneCapture().lastError();
+        && ((m_sessionManager && m_sessionManager->state() == local_jarvis::session::SessionState::Active)
+            || m_microphoneTestActive);
+    const std::string lastError = diagnostics.lastError;
     if (!microphoneActive && wantsMicrophone && !lastError.empty() && lastError != m_lastReportedMicrophoneFailure) {
         recordMicrophonePrivacyEvent("microphone_start_failed", lastError);
         m_lastReportedMicrophoneFailure = lastError;
@@ -760,12 +794,12 @@ void MainWindow::refreshMicrophoneRuntimeUi()
 
 void MainWindow::handleAudioModeChanged(int)
 {
-    if (sessionActive()) {
+    if (sessionActive() || m_microphoneTestActive) {
         const bool activeBackendIsReal = m_realMicrophoneCapture
             && m_activeMicrophoneCapture == m_realMicrophoneCapture.get();
         const QSignalBlocker blocker(m_audioModeCombo);
         m_audioModeCombo->setCurrentIndex(activeBackendIsReal ? 1 : 0);
-        QMessageBox::information(this, "Session Active", "Stop the current session before changing audio capture mode.");
+        QMessageBox::information(this, "Microphone Active", "Stop the current session or microphone test before changing audio capture mode.");
         return;
     }
 
@@ -802,6 +836,11 @@ void MainWindow::handleMicrophoneDeviceChanged(int index)
 
 void MainWindow::setMicrophoneRequested(bool enabled)
 {
+    if (m_microphoneTestActive && !enabled) {
+        stopMicrophoneTest();
+        return;
+    }
+
     m_privacyManager.setMicrophoneEnabled(enabled);
     if (m_sessionManager) {
         m_sessionManager->syncCaptureWithPrivacy();
@@ -815,10 +854,80 @@ void MainWindow::setMicrophoneRequested(bool enabled)
     refreshMicrophoneRuntimeUi();
 }
 
+void MainWindow::startMicrophoneTest()
+{
+    if (sessionActive()) {
+        QMessageBox::information(this, "Session Active", "Stop the current session before running the standalone microphone test.");
+        return;
+    }
+
+    m_microphoneTestPreviousMicRequested = m_privacyManager.captureStatus().microphoneEnabled;
+    m_privacyManager.setMicrophoneEnabled(true);
+    {
+        const QSignalBlocker blocker(m_microphoneCaptureCheckBox);
+        m_microphoneCaptureCheckBox->setChecked(true);
+    }
+
+    recordMicrophonePrivacyEvent("microphone_test_started", "User started a 10-second microphone level diagnostic test.");
+    if (!activeMicrophoneCapture().startMicrophoneCapture()) {
+        const std::string error = activeMicrophoneCapture().lastError().empty()
+            ? "Microphone test could not start."
+            : activeMicrophoneCapture().lastError();
+        recordMicrophonePrivacyEvent("microphone_start_failed", error);
+        m_privacyManager.setMicrophoneEnabled(m_microphoneTestPreviousMicRequested);
+        refreshStatus();
+        refreshMicrophoneRuntimeUi();
+        return;
+    }
+
+    m_microphoneTestActive = true;
+    m_microphoneTestTimer.start(10'000);
+    appendLifecycleEvent("Microphone diagnostic test running for 10 seconds.");
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
+void MainWindow::stopMicrophoneTest()
+{
+    if (!m_microphoneTestActive) {
+        return;
+    }
+
+    m_microphoneTestTimer.stop();
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    m_microphoneTestActive = false;
+    m_privacyManager.setMicrophoneEnabled(m_microphoneTestPreviousMicRequested);
+    recordMicrophonePrivacyEvent("microphone_test_stopped", "User stopped the microphone level diagnostic test.");
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
+void MainWindow::finishMicrophoneTest()
+{
+    if (!m_microphoneTestActive) {
+        return;
+    }
+
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    m_microphoneTestActive = false;
+    m_privacyManager.setMicrophoneEnabled(m_microphoneTestPreviousMicRequested);
+    recordMicrophonePrivacyEvent("microphone_test_stopped", "Microphone level diagnostic test completed after 10 seconds.");
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
 void MainWindow::stopMicrophoneForShutdown()
 {
-    const bool wasActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
+    const bool wasActive = activeMicrophoneCapture().isMicrophoneActive();
+    const bool wasTestActive = m_microphoneTestActive;
+    m_microphoneTestTimer.stop();
     activeMicrophoneCapture().stopMicrophoneCapture();
+    m_microphoneTestActive = false;
+    if (wasTestActive) {
+        recordMicrophonePrivacyEvent(
+            "microphone_test_stopped",
+            "Microphone level diagnostic test stopped during app shutdown.");
+    }
     if (wasActive) {
         recordMicrophonePrivacyEvent(
             "microphone_disabled",
@@ -847,6 +956,47 @@ void MainWindow::recordMicrophonePrivacyEvent(const std::string &eventType, cons
     appendLifecycleEvent(QString("%1: %2")
         .arg(QString::fromStdString(eventType),
              QString::fromStdString(details)));
+}
+
+QString MainWindow::microphoneDiagnosticsText() const
+{
+    const auto diagnostics = activeMicrophoneCapture().diagnostics();
+    const QString lastCallback = diagnostics.lastCallbackTimeMs > 0
+        ? QDateTime::fromMSecsSinceEpoch(diagnostics.lastCallbackTimeMs, Qt::UTC).toString(Qt::ISODateWithMs)
+        : "never";
+    const QString deviceName = diagnostics.selectedDeviceName.empty()
+        ? (m_microphoneDeviceCombo ? m_microphoneDeviceCombo->currentText() : QString("unknown"))
+        : QString::fromStdString(diagnostics.selectedDeviceName);
+    const QString deviceId = diagnostics.selectedDeviceId.empty()
+        ? QString::fromStdString(activeMicrophoneCapture().selectedInputDeviceId())
+        : QString::fromStdString(diagnostics.selectedDeviceId);
+    const QString format = diagnostics.sampleFormat.empty()
+        ? "unknown"
+        : QString::fromStdString(diagnostics.sampleFormat);
+    const QString error = diagnostics.lastError.empty()
+        ? "none"
+        : QString::fromStdString(diagnostics.lastError);
+
+    return QString(
+        "Selected device: %1\n"
+        "Device id: %2\n"
+        "Capture active: %3 | Sample rate: %4 Hz | Channels: %5 | Format: %6\n"
+        "Buffers: %7 | Frames: %8 | Non-zero samples: %9\n"
+        "Last buffer RMS: %10 | Smoothed level: %11 | Last callback: %12\n"
+        "Last error: %13")
+        .arg(deviceName,
+             deviceId.isEmpty() ? QString("none") : deviceId,
+             diagnostics.captureActive ? "yes" : "no",
+             QString::number(diagnostics.sampleRate),
+             QString::number(diagnostics.channelCount),
+             format,
+             QString::number(diagnostics.buffersReceived),
+             QString::number(diagnostics.framesReceived),
+             QString::number(diagnostics.nonZeroSamplesObserved),
+             QString::number(diagnostics.lastBufferRms, 'f', 4),
+             QString::number(diagnostics.smoothedLevel, 'f', 4),
+             lastCallback,
+             error);
 }
 
 bool MainWindow::sessionActive() const
@@ -887,14 +1037,15 @@ void MainWindow::refreshStatus()
         .arg(active ? "Active" : "Stopped", sessionId));
 
     const auto status = m_privacyManager.captureStatus();
-    const bool microphoneActive = m_sessionManager && m_sessionManager->isMicrophoneCaptureActive();
+    const auto microphoneDiagnostics = activeMicrophoneCapture().diagnostics();
+    const bool microphoneActive = microphoneDiagnostics.captureActive;
     const QString microphoneRuntime = microphoneActive
         ? "running"
         : "stopped";
     const QString systemAudioRuntime = m_sessionManager && m_sessionManager->isSystemAudioCaptureActive()
         ? "running"
         : "stopped";
-    const int microphoneLevel = static_cast<int>(std::clamp(activeMicrophoneCapture().currentInputLevel(), 0.0, 1.0) * 100.0);
+    const int microphoneLevel = static_cast<int>(std::clamp(microphoneDiagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
     const QString modeText = isRealMicrophoneMode() ? "Real microphone" : "Dummy audio";
     const QString deviceText = m_microphoneDeviceCombo && m_microphoneDeviceCombo->isEnabled()
         ? m_microphoneDeviceCombo->currentText()
@@ -918,7 +1069,7 @@ void MainWindow::refreshStatus()
         m_aiProcessingStatusLabel->setText("AI processing: idle");
     }
 
-    m_startButton->setEnabled(!active && m_sessionManager != nullptr);
+    m_startButton->setEnabled(!active && !m_microphoneTestActive && m_sessionManager != nullptr);
     m_stopButton->setEnabled(active);
     const bool modelReady = m_setupStatus.modelReady;
     m_processStudyButton->setEnabled(active && modelReady);
@@ -930,6 +1081,22 @@ void MainWindow::refreshStatus()
         m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
         m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
         m_systemAudioCaptureCheckBox->setEnabled(!isRealMicrophoneMode());
+    }
+    if (m_microphoneDiagnosticsLabel) {
+        m_microphoneDiagnosticsLabel->setText(microphoneDiagnosticsText());
+    }
+    if (m_microphoneTestButton) {
+        m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
+        m_microphoneTestButton->setEnabled(!active || m_microphoneTestActive);
+    }
+    if (m_audioModeCombo) {
+        m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive);
+    }
+    if (m_microphoneDeviceCombo) {
+        m_microphoneDeviceCombo->setEnabled(!active && !m_microphoneTestActive && m_microphoneDeviceCombo->count() > 0);
+    }
+    if (m_refreshMicrophoneDevicesButton) {
+        m_refreshMicrophoneDevicesButton->setEnabled(!active && !m_microphoneTestActive);
     }
 }
 

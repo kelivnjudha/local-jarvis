@@ -81,6 +81,16 @@ public:
         return 0.0;
     }
 
+    MicrophoneDiagnostics diagnostics() const override
+    {
+        std::lock_guard lock(m_mutex);
+        return MicrophoneDiagnostics {
+            .selectedDeviceId = m_selectedDeviceId,
+            .captureActive = false,
+            .lastError = m_lastError
+        };
+    }
+
     std::string lastError() const override
     {
         std::lock_guard lock(m_mutex);

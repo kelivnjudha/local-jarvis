@@ -1,10 +1,26 @@
 #include "DummyAudioCapture.h"
 
 #include <algorithm>
+#include <chrono>
 #include <string>
 #include <utility>
 
 namespace local_jarvis::audio {
+namespace {
+
+std::int64_t nowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+double dummyLevelForSequence(std::uint64_t sequence)
+{
+    const double phase = static_cast<double>(sequence % 6);
+    return std::clamp(0.18 + (phase * 0.05), 0.0, 1.0);
+}
+
+} // namespace
 
 DummyAudioCapture::DummyAudioCapture(
     const privacy::PrivacyManager &privacyManager,
@@ -35,6 +51,8 @@ bool DummyAudioCapture::selectInputDevice(const std::string &deviceId)
 {
     std::lock_guard lock(m_mutex);
     m_selectedDeviceId = deviceId.empty() ? "dummy-microphone" : deviceId;
+    m_diagnostics.selectedDeviceId = m_selectedDeviceId;
+    m_diagnostics.selectedDeviceName = "Dummy microphone";
     return true;
 }
 
@@ -59,6 +77,13 @@ bool DummyAudioCapture::startMicrophoneCapture()
         std::lock_guard lock(m_mutex);
         m_microphoneActive = true;
         m_lastError.clear();
+        m_diagnostics.captureActive = true;
+        m_diagnostics.selectedDeviceId = m_selectedDeviceId;
+        m_diagnostics.selectedDeviceName = "Dummy microphone";
+        m_diagnostics.sampleRate = 16000;
+        m_diagnostics.channelCount = 1;
+        m_diagnostics.sampleFormat = "dummy-float32";
+        m_diagnostics.lastError.clear();
     }
 
     startWorkerIfNeeded();
@@ -70,6 +95,8 @@ void DummyAudioCapture::stopMicrophoneCapture()
     {
         std::lock_guard lock(m_mutex);
         m_microphoneActive = false;
+        m_diagnostics.captureActive = false;
+        m_diagnostics.smoothedLevel = 0.0;
     }
 
     stopWorkerIfIdle();
@@ -130,8 +157,19 @@ double DummyAudioCapture::currentInputLevel() const
         return 0.0;
     }
 
-    const double phase = static_cast<double>(m_sequence % 6);
-    return std::clamp(0.18 + (phase * 0.05), 0.0, 1.0);
+    return dummyLevelForSequence(m_sequence);
+}
+
+MicrophoneDiagnostics DummyAudioCapture::diagnostics() const
+{
+    std::lock_guard lock(m_mutex);
+    auto diagnostics = m_diagnostics;
+    diagnostics.selectedDeviceId = m_selectedDeviceId;
+    diagnostics.selectedDeviceName = "Dummy microphone";
+    diagnostics.captureActive = m_microphoneActive;
+    diagnostics.smoothedLevel = m_microphoneActive ? dummyLevelForSequence(m_sequence) : 0.0;
+    diagnostics.lastError = m_lastError;
+    return diagnostics;
 }
 
 std::string DummyAudioCapture::lastError() const
@@ -221,6 +259,15 @@ void DummyAudioCapture::emitTranscript(bool microphoneActive, bool systemAudioAc
         sequence = ++m_sequence;
         startMs = m_nextStartMs;
         m_nextStartMs += m_interval.count();
+        if (microphoneActive) {
+            const double level = dummyLevelForSequence(sequence);
+            ++m_diagnostics.buffersReceived;
+            m_diagnostics.framesReceived += static_cast<std::uint64_t>(m_interval.count() * 16);
+            m_diagnostics.nonZeroSamplesObserved += 160;
+            m_diagnostics.lastBufferRms = level;
+            m_diagnostics.smoothedLevel = level;
+            m_diagnostics.lastCallbackTimeMs = nowMs();
+        }
     }
 
     if (!callback) {

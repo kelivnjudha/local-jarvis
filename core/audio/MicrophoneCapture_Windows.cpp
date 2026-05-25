@@ -17,9 +17,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <utility>
@@ -64,10 +66,40 @@ std::wstring utf8ToWide(const std::string &value)
 
 std::string hresultText(HRESULT hr, const char *context)
 {
+    std::string hint;
+    switch (hr) {
+    case AUDCLNT_E_DEVICE_INVALIDATED:
+        hint = "The selected microphone was unplugged, disabled, or changed by Windows.";
+        break;
+    case AUDCLNT_E_SERVICE_NOT_RUNNING:
+        hint = "The Windows Audio service is not running.";
+        break;
+    case AUDCLNT_E_ENDPOINT_CREATE_FAILED:
+        hint = "Windows could not open the selected microphone endpoint.";
+        break;
+    case AUDCLNT_E_DEVICE_IN_USE:
+        hint = "The microphone is already in exclusive use by another app.";
+        break;
+    case E_ACCESSDENIED:
+        hint = "Microphone access was denied by Windows privacy settings or device policy.";
+        break;
+    default:
+        break;
+    }
+
     std::ostringstream stream;
     stream << context << " failed with HRESULT 0x"
            << std::uppercase << std::hex << static_cast<unsigned long>(hr);
+    if (!hint.empty()) {
+        stream << ". " << hint;
+    }
     return stream.str();
+}
+
+std::int64_t nowMs()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 class ScopedCom {
@@ -168,11 +200,63 @@ bool isPcmFormat(const WAVEFORMATEX *format)
     return false;
 }
 
-void appendPcmSamples(
+std::string formatDescription(const WAVEFORMATEX *format)
+{
+    if (format == nullptr) {
+        return "unknown";
+    }
+
+    std::ostringstream stream;
+    if (isFloatFormat(format)) {
+        stream << "float";
+    } else if (isPcmFormat(format)) {
+        stream << "pcm";
+    } else {
+        stream << "unsupported-tag-" << format->wFormatTag;
+    }
+    stream << format->wBitsPerSample
+           << " " << format->nChannels << "ch"
+           << " @" << format->nSamplesPerSec << "Hz";
+    return stream.str();
+}
+
+bool isSupportedCaptureFormat(const WAVEFORMATEX *format)
+{
+    if (format == nullptr || format->nChannels == 0 || format->nSamplesPerSec == 0) {
+        return false;
+    }
+
+    if (isFloatFormat(format)) {
+        return format->wBitsPerSample == 32;
+    }
+
+    if (isPcmFormat(format)) {
+        return format->wBitsPerSample == 8
+            || format->wBitsPerSample == 16
+            || format->wBitsPerSample == 24
+            || format->wBitsPerSample == 32;
+    }
+
+    return false;
+}
+
+std::uint64_t countNonZeroSamples(std::span<const float> samples)
+{
+    std::uint64_t count = 0;
+    for (float sample : samples) {
+        if (std::abs(sample) > std::numeric_limits<float>::epsilon()) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool appendPcmSamples(
     const BYTE *data,
     UINT32 frameCount,
     const WAVEFORMATEX *format,
-    std::vector<float> &samples)
+    std::vector<float> &samples,
+    std::string &error)
 {
     const int channels = std::max<int>(1, format->nChannels);
     const int bitsPerSample = format->wBitsPerSample;
@@ -185,12 +269,19 @@ void appendPcmSamples(
         for (std::size_t index = 0; index < sampleCount; ++index) {
             samples.push_back(std::clamp(floatSamples[index], -1.0F, 1.0F));
         }
-        return;
+        return true;
     }
 
     if (!isPcmFormat(format)) {
-        samples.assign(sampleCount, 0.0F);
-        return;
+        error = "Unsupported microphone sample format: " + formatDescription(format);
+        return false;
+    }
+
+    if (bitsPerSample == 8) {
+        for (std::size_t index = 0; index < sampleCount; ++index) {
+            samples.push_back((static_cast<float>(data[index]) - 128.0F) / 128.0F);
+        }
+        return true;
     }
 
     if (bitsPerSample == 16) {
@@ -198,7 +289,7 @@ void appendPcmSamples(
         for (std::size_t index = 0; index < sampleCount; ++index) {
             samples.push_back(static_cast<float>(pcmSamples[index]) / 32768.0F);
         }
-        return;
+        return true;
     }
 
     if (bitsPerSample == 24) {
@@ -213,7 +304,7 @@ void appendPcmSamples(
             }
             samples.push_back(static_cast<float>(value) / 8388608.0F);
         }
-        return;
+        return true;
     }
 
     if (bitsPerSample == 32) {
@@ -221,10 +312,11 @@ void appendPcmSamples(
         for (std::size_t index = 0; index < sampleCount; ++index) {
             samples.push_back(static_cast<float>(static_cast<double>(pcmSamples[index]) / 2147483648.0));
         }
-        return;
+        return true;
     }
 
-    samples.assign(sampleCount, 0.0F);
+    error = "Unsupported microphone PCM bit depth: " + std::to_string(bitsPerSample);
+    return false;
 }
 
 } // namespace
@@ -309,6 +401,7 @@ bool WindowsMicrophoneCapture::selectInputDevice(const std::string &deviceId)
 {
     std::lock_guard lock(m_mutex);
     m_selectedDeviceId = deviceId;
+    m_diagnostics.selectedDeviceId = deviceId;
     return true;
 }
 
@@ -340,6 +433,8 @@ bool WindowsMicrophoneCapture::startMicrophoneCapture()
         m_startCompleted = false;
         m_lastError.clear();
         m_levelMeter.reset();
+        m_diagnostics = {};
+        m_diagnostics.selectedDeviceId = m_selectedDeviceId;
     }
 
     m_worker = std::thread([this]() {
@@ -376,6 +471,8 @@ void WindowsMicrophoneCapture::stopMicrophoneCapture()
     m_startCompleted = false;
     m_stopRequested = false;
     m_levelMeter.reset();
+    m_diagnostics.captureActive = false;
+    m_diagnostics.smoothedLevel = 0.0;
 }
 
 bool WindowsMicrophoneCapture::startSystemAudioCapture()
@@ -416,6 +513,19 @@ double WindowsMicrophoneCapture::currentInputLevel() const
     return m_levelMeter.level();
 }
 
+MicrophoneDiagnostics WindowsMicrophoneCapture::diagnostics() const
+{
+    std::lock_guard lock(m_mutex);
+    auto diagnostics = m_diagnostics;
+    diagnostics.captureActive = m_microphoneActive;
+    diagnostics.smoothedLevel = m_levelMeter.level();
+    diagnostics.lastError = m_lastError;
+    if (diagnostics.selectedDeviceId.empty()) {
+        diagnostics.selectedDeviceId = m_selectedDeviceId;
+    }
+    return diagnostics;
+}
+
 std::string WindowsMicrophoneCapture::lastError() const
 {
     std::lock_guard lock(m_mutex);
@@ -452,6 +562,9 @@ void WindowsMicrophoneCapture::captureLoop()
         completeStart(false, "No Windows microphone input device is available.");
         return;
     }
+    const auto actualDeviceId = deviceIdFor(device).value_or(std::wstring {});
+    const std::string actualDeviceIdUtf8 = wideToUtf8(actualDeviceId.c_str());
+    const std::string actualDeviceName = friendlyNameFor(device);
 
     ComPtr<IAudioClient> audioClient;
     hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &audioClient);
@@ -465,6 +578,45 @@ void WindowsMicrophoneCapture::captureLoop()
     if (FAILED(hr) || mixFormat == nullptr) {
         completeStart(false, hresultText(hr, "Reading microphone mix format"));
         return;
+    }
+
+    WAVEFORMATEX *closestMatch = nullptr;
+    hr = audioClient->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, mixFormat, &closestMatch);
+    if (hr == S_FALSE && closestMatch != nullptr) {
+        CoTaskMemFree(mixFormat);
+        mixFormat = closestMatch;
+        closestMatch = nullptr;
+    } else if (FAILED(hr)) {
+        CoTaskMemFree(mixFormat);
+        completeStart(false, hresultText(hr, "Checking microphone mix format support"));
+        return;
+    } else if (hr != S_OK) {
+        if (closestMatch != nullptr) {
+            CoTaskMemFree(closestMatch);
+        }
+        CoTaskMemFree(mixFormat);
+        completeStart(false, "Windows did not provide a supported shared-mode microphone format.");
+        return;
+    }
+    if (closestMatch != nullptr) {
+        CoTaskMemFree(closestMatch);
+    }
+
+    if (!isSupportedCaptureFormat(mixFormat)) {
+        const std::string error = "Unsupported microphone sample format: " + formatDescription(mixFormat);
+        CoTaskMemFree(mixFormat);
+        completeStart(false, error);
+        return;
+    }
+
+    {
+        std::lock_guard lock(m_mutex);
+        m_selectedDeviceId = actualDeviceIdUtf8.empty() ? m_selectedDeviceId : actualDeviceIdUtf8;
+        m_diagnostics.selectedDeviceId = m_selectedDeviceId;
+        m_diagnostics.selectedDeviceName = actualDeviceName;
+        m_diagnostics.sampleRate = static_cast<int>(mixFormat->nSamplesPerSec);
+        m_diagnostics.channelCount = static_cast<int>(mixFormat->nChannels);
+        m_diagnostics.sampleFormat = formatDescription(mixFormat);
     }
 
     const REFERENCE_TIME bufferDuration = 1'000'000; // 100 ms.
@@ -516,6 +668,7 @@ void WindowsMicrophoneCapture::captureLoop()
     completeStart(true, "");
 
     std::vector<float> samples;
+    std::vector<float> monoSamples;
     bool captureError = false;
     while (!stopRequested() && !captureError) {
         const DWORD waitResult = WaitForSingleObject(captureEvent, 100);
@@ -545,15 +698,32 @@ void WindowsMicrophoneCapture::captureLoop()
             if ((flags & AUDCLNT_BUFFERFLAGS_SILENT) != 0 || data == nullptr) {
                 samples.assign(static_cast<std::size_t>(frameCount) * std::max<int>(1, mixFormat->nChannels), 0.0F);
             } else {
-                appendPcmSamples(data, frameCount, mixFormat, samples);
-            }
-
-            {
-                std::lock_guard lock(m_mutex);
-                m_levelMeter.processSamples(samples);
+                std::string conversionError;
+                if (!appendPcmSamples(data, frameCount, mixFormat, samples, conversionError)) {
+                    setLastError(conversionError);
+                    captureError = true;
+                }
             }
 
             captureClient->ReleaseBuffer(frameCount);
+            if (captureError) {
+                break;
+            }
+
+            monoSamples = AudioLevelMeter::mixInterleavedToMono(samples, static_cast<int>(mixFormat->nChannels));
+            const double bufferRms = AudioLevelMeter::calculateRms(monoSamples);
+            const std::uint64_t nonZeroSamples = countNonZeroSamples(monoSamples);
+            {
+                std::lock_guard lock(m_mutex);
+                m_levelMeter.processSamples(monoSamples);
+                ++m_diagnostics.buffersReceived;
+                m_diagnostics.framesReceived += frameCount;
+                m_diagnostics.nonZeroSamplesObserved += nonZeroSamples;
+                m_diagnostics.lastBufferRms = bufferRms;
+                m_diagnostics.smoothedLevel = m_levelMeter.level();
+                m_diagnostics.lastCallbackTimeMs = nowMs();
+            }
+
             hr = captureClient->GetNextPacketSize(&packetFrames);
             if (FAILED(hr)) {
                 setLastError(hresultText(hr, "Reading microphone packet size"));
@@ -580,6 +750,8 @@ void WindowsMicrophoneCapture::completeStart(bool ok, const std::string &error)
         m_microphoneActive = ok;
         m_startCompleted = true;
         m_lastError = error;
+        m_diagnostics.captureActive = ok;
+        m_diagnostics.lastError = error;
     }
     m_startCondition.notify_all();
 }
@@ -594,6 +766,7 @@ void WindowsMicrophoneCapture::setLastError(const std::string &error)
 {
     std::lock_guard lock(m_mutex);
     m_lastError = error;
+    m_diagnostics.lastError = error;
 }
 
 } // namespace local_jarvis::audio

@@ -18,6 +18,7 @@ public:
     virtual bool selectInputDevice(const std::string &deviceId) = 0;
     [[nodiscard]] virtual std::string selectedInputDeviceId() const = 0;
     [[nodiscard]] virtual double currentInputLevel() const = 0;
+    [[nodiscard]] virtual MicrophoneDiagnostics diagnostics() const = 0;
     [[nodiscard]] virtual std::string lastError() const = 0;
 };
 
