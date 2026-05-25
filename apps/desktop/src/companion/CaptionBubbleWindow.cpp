@@ -66,6 +66,11 @@ void CaptionBubbleWindow::setMicrophonePlaceholderText(const QString &text)
     refreshCaptionText();
 }
 
+void CaptionBubbleWindow::setDummyCaptionsEnabled(bool enabled)
+{
+    m_dummyCaptionsEnabled = enabled;
+}
+
 void CaptionBubbleWindow::refreshCaptionText()
 {
     if (!m_microphonePlaceholderText.trimmed().isEmpty()) {
@@ -126,6 +131,10 @@ void CaptionBubbleWindow::paintEvent(QPaintEvent *)
 
 void CaptionBubbleWindow::updateDummyCaption()
 {
+    if (!m_dummyCaptionsEnabled) {
+        return;
+    }
+
     m_captionManager.addSegment(m_dummyCaptionSource.nextSegment());
     refreshCaptionText();
     ++m_captionIndex;

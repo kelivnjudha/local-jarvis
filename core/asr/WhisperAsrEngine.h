@@ -7,7 +7,7 @@ namespace local_jarvis::asr {
 class WhisperAsrEngine final : public AsrEngine {
 public:
     bool initialize(const std::string &modelPath) override;
-    AsrResult transcribePcm(const PcmAudioBuffer &audioBuffer) override;
+    AsrResult transcribeChunk(const AsrInputChunk &chunk) override;
     void shutdown() override;
 
     [[nodiscard]] std::string engineName() const override;

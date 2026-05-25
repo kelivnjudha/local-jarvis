@@ -24,7 +24,9 @@
 
 #include "ai/ModelManager.h"
 #include "ai/OllamaClient.h"
-#include "asr/AsrEngine.h"
+#include "asr/AsrTypes.h"
+#include "asr/AsrWorker.h"
+#include "asr/AudioChunkBuffer.h"
 #include "audio/DummyAudioCapture.h"
 #include "audio/MicrophoneCapture.h"
 #include "caption/CaptionManager.h"
@@ -63,9 +65,19 @@ private:
     void startMicrophoneTest();
     void stopMicrophoneTest();
     void finishMicrophoneTest();
+    void setAsrEnabled(bool enabled);
+    void startAsrPipelineIfNeeded();
+    void stopAsrPipeline();
+    void installPcmAudioCallback();
+    void clearPcmAudioCallback();
+    void handlePcmAudioFrame(const local_jarvis::audio::PcmAudioFrame &frame);
+    void handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscriptSegment &segment);
     void stopMicrophoneForShutdown();
     void recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details);
+    void recordAsrEvent(const std::string &eventType, const std::string &details, const std::optional<std::string> &sessionId = std::nullopt);
     [[nodiscard]] QString microphoneDiagnosticsText() const;
+    [[nodiscard]] QString asrBackendText() const;
+    [[nodiscard]] QString asrStatusText() const;
     [[nodiscard]] bool sessionActive() const;
     [[nodiscard]] bool isRealMicrophoneMode() const;
     [[nodiscard]] local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture();
@@ -107,6 +119,12 @@ private:
     QProgressBar *m_microphoneLevelBar = nullptr;
     QLabel *m_microphoneDiagnosticsLabel = nullptr;
     QLabel *m_microphoneErrorLabel = nullptr;
+    QCheckBox *m_asrEnabledCheckBox = nullptr;
+    QLabel *m_asrBackendLabel = nullptr;
+    QLabel *m_asrRuntimeStatusLabel = nullptr;
+    QLabel *m_asrStatsLabel = nullptr;
+    QLabel *m_asrLastSegmentLabel = nullptr;
+    QLabel *m_asrErrorLabel = nullptr;
     QLabel *m_sessionStatusLabel = nullptr;
     QLabel *m_captureStatusLabel = nullptr;
     QLabel *m_asrStatusLabel = nullptr;
@@ -150,7 +168,8 @@ private:
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
     std::unique_ptr<local_jarvis::audio::MicrophoneCapture> m_realMicrophoneCapture;
     local_jarvis::audio::MicrophoneCapture *m_activeMicrophoneCapture = nullptr;
-    std::unique_ptr<local_jarvis::asr::AsrEngine> m_asrEngine;
+    std::unique_ptr<local_jarvis::asr::AsrWorker> m_asrWorker;
+    local_jarvis::asr::AudioChunkBuffer m_audioChunkBuffer;
     local_jarvis::ai::OllamaClient m_ollamaClient;
     local_jarvis::setup::SystemCheck m_systemCheck;
     local_jarvis::ai::ModelManager m_modelManager;
@@ -174,6 +193,7 @@ private:
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
+    std::atomic_bool m_asrEnabled { false };
     bool m_reportedMicrophoneActive = false;
     bool m_microphoneTestActive = false;
     bool m_microphoneTestPreviousMicRequested = false;

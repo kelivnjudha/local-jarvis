@@ -24,6 +24,7 @@ public:
     void setAnchorPosition(const QPoint &companionTopLeft);
     void setCaptionUpdatedCallback(std::function<void()> callback);
     void setMicrophonePlaceholderText(const QString &text);
+    void setDummyCaptionsEnabled(bool enabled);
     void refreshCaptionText();
 
 protected:
@@ -43,6 +44,7 @@ private:
     QString m_captionText = "Listening ready...";
     QString m_microphonePlaceholderText;
     int m_captionIndex = 0;
+    bool m_dummyCaptionsEnabled = true;
     QPoint m_companionTopLeft;
     std::function<void()> m_captionUpdatedCallback;
 };

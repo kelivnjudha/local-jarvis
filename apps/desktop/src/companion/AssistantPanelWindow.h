@@ -20,6 +20,7 @@ public:
         QWidget *parent = nullptr);
 
     void applyState();
+    void setAsrState(bool enabled, const QString &statusText);
     void setAnchorPosition(const QPoint &companionTopLeft);
     void setCallbacks(
         std::function<void()> changedCallback,
@@ -27,7 +28,8 @@ public:
         std::function<void()> openFullAppCallback,
         std::function<void()> closeCallback,
         std::function<void()> panelActionCallback,
-        std::function<void(bool)> microphoneToggleCallback);
+        std::function<void(bool)> microphoneToggleCallback,
+        std::function<void(bool)> asrToggleCallback = {});
 
 private:
     void buildUi();
@@ -46,6 +48,7 @@ private:
     QCheckBox *m_showSpeakerCheck = nullptr;
     QCheckBox *m_translationCheck = nullptr;
     QCheckBox *m_microphoneCheck = nullptr;
+    QCheckBox *m_asrCheck = nullptr;
     QLabel *m_languageLabel = nullptr;
     QLabel *m_statusLabel = nullptr;
     QPushButton *m_pauseButton = nullptr;
@@ -58,4 +61,7 @@ private:
     std::function<void()> m_closeCallback;
     std::function<void()> m_panelActionCallback;
     std::function<void(bool)> m_microphoneToggleCallback;
+    std::function<void(bool)> m_asrToggleCallback;
+    bool m_asrEnabled = false;
+    QString m_asrStatusText = "Disabled";
 };

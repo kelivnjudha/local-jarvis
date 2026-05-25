@@ -76,6 +76,12 @@ public:
         m_transcriptCallback = std::move(callback);
     }
 
+    void setPcmAudioCallback(PcmAudioCallback callback) override
+    {
+        std::lock_guard lock(m_mutex);
+        m_pcmAudioCallback = std::move(callback);
+    }
+
     double currentInputLevel() const override
     {
         return 0.0;
@@ -103,6 +109,7 @@ private:
     std::string m_selectedDeviceId;
     std::string m_lastError;
     TranscriptCallback m_transcriptCallback;
+    PcmAudioCallback m_pcmAudioCallback;
 };
 #endif
 

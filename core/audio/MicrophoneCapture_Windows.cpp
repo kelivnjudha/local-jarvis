@@ -507,6 +507,12 @@ void WindowsMicrophoneCapture::setTranscriptCallback(TranscriptCallback callback
     m_transcriptCallback = std::move(callback);
 }
 
+void WindowsMicrophoneCapture::setPcmAudioCallback(PcmAudioCallback callback)
+{
+    std::lock_guard lock(m_mutex);
+    m_pcmAudioCallback = std::move(callback);
+}
+
 double WindowsMicrophoneCapture::currentInputLevel() const
 {
     std::lock_guard lock(m_mutex);
@@ -713,15 +719,36 @@ void WindowsMicrophoneCapture::captureLoop()
             monoSamples = AudioLevelMeter::mixInterleavedToMono(samples, static_cast<int>(mixFormat->nChannels));
             const double bufferRms = AudioLevelMeter::calculateRms(monoSamples);
             const std::uint64_t nonZeroSamples = countNonZeroSamples(monoSamples);
+            PcmAudioCallback pcmCallback;
+            std::int64_t startMs = 0;
+            std::int64_t endMs = 0;
+            const auto callbackTimeMs = nowMs();
             {
                 std::lock_guard lock(m_mutex);
+                const std::uint64_t framesBeforeBuffer = m_diagnostics.framesReceived;
+                startMs = static_cast<std::int64_t>(
+                    (static_cast<double>(framesBeforeBuffer) * 1000.0) / static_cast<double>(mixFormat->nSamplesPerSec));
+                endMs = static_cast<std::int64_t>(
+                    (static_cast<double>(framesBeforeBuffer + frameCount) * 1000.0) / static_cast<double>(mixFormat->nSamplesPerSec));
                 m_levelMeter.processSamples(monoSamples);
                 ++m_diagnostics.buffersReceived;
                 m_diagnostics.framesReceived += frameCount;
                 m_diagnostics.nonZeroSamplesObserved += nonZeroSamples;
                 m_diagnostics.lastBufferRms = bufferRms;
                 m_diagnostics.smoothedLevel = m_levelMeter.level();
-                m_diagnostics.lastCallbackTimeMs = nowMs();
+                m_diagnostics.lastCallbackTimeMs = callbackTimeMs;
+                pcmCallback = m_pcmAudioCallback;
+            }
+
+            if (pcmCallback) {
+                pcmCallback(PcmAudioFrame {
+                    .sampleRate = static_cast<int>(mixFormat->nSamplesPerSec),
+                    .channelCount = 1,
+                    .samples = monoSamples,
+                    .startMs = startMs,
+                    .endMs = endMs,
+                    .timestampMs = callbackTimeMs
+                });
             }
 
             hr = captureClient->GetNextPacketSize(&packetFrames);

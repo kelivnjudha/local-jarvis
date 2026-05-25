@@ -9,13 +9,23 @@ bool WhisperAsrEngine::initialize(const std::string &modelPath)
     return m_initialized;
 }
 
-AsrResult WhisperAsrEngine::transcribePcm(const PcmAudioBuffer &)
+AsrResult WhisperAsrEngine::transcribeChunk(const AsrInputChunk &chunk)
 {
+#if LOCAL_JARVIS_WHISPER_LINKED
+    (void)chunk;
     return {
         .ok = false,
         .text = {},
-        .message = "Whisper ASR integration is prepared but not implemented yet."
+        .message = "Whisper ASR integration hooks are linked, but transcription is not implemented in this scaffold."
     };
+#else
+    (void)chunk;
+    return {
+        .ok = false,
+        .text = {},
+        .message = "Whisper ASR was enabled, but the whisper.cpp target is not linked."
+    };
+#endif
 }
 
 void WhisperAsrEngine::shutdown()
@@ -26,7 +36,7 @@ void WhisperAsrEngine::shutdown()
 
 std::string WhisperAsrEngine::engineName() const
 {
-    return "whisper.cpp stub";
+    return "Whisper";
 }
 
 bool WhisperAsrEngine::isInitialized() const

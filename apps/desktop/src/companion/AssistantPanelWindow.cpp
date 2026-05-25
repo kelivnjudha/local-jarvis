@@ -31,18 +31,21 @@ void AssistantPanelWindow::applyState()
     const QSignalBlocker showSpeakerBlocker(m_showSpeakerCheck);
     const QSignalBlocker translationBlocker(m_translationCheck);
     const QSignalBlocker microphoneBlocker(m_microphoneCheck);
+    const QSignalBlocker asrBlocker(m_asrCheck);
     m_modeCombo->setCurrentIndex(static_cast<int>(state.currentMode));
     m_captionModeCombo->setCurrentIndex(captionModeIndex(captionState.captionMode));
     m_captionsCheck->setChecked(state.captionsVisible && captionState.captionsEnabled);
     m_showSpeakerCheck->setChecked(captionState.showSpeaker);
     m_translationCheck->setChecked(state.translationEnabled);
     m_microphoneCheck->setChecked(state.microphoneEnabled);
+    m_asrCheck->setChecked(m_asrEnabled);
     m_languageLabel->setText(QString("Source: Auto | Target: English"));
-    m_statusLabel->setText(QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4")
+    m_statusLabel->setText(QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4\nASR: %5")
         .arg(QString::fromStdString(profile.displayName),
              QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)),
              QString::fromStdString(profile.outfitLabel),
-             QString::fromStdString(profile.accessoryLabel)));
+             QString::fromStdString(profile.accessoryLabel),
+             m_asrStatusText));
     setStyleSheet(QString(
         "QWidget { background: #f8fafc; color: #17202c; }"
         "QPushButton { min-height: 24px; }"
@@ -51,6 +54,12 @@ void AssistantPanelWindow::applyState()
         "QLabel { border-left: 4px solid %1; padding-left: 8px; }")
             .arg(QString::fromStdString(local_jarvis::companion::colorToHex(profile.primaryColor))));
     applyWindowFlags(state.companionVisible && state.panelVisible);
+}
+
+void AssistantPanelWindow::setAsrState(bool enabled, const QString &statusText)
+{
+    m_asrEnabled = enabled;
+    m_asrStatusText = statusText;
 }
 
 void AssistantPanelWindow::setAnchorPosition(const QPoint &companionTopLeft)
@@ -64,7 +73,8 @@ void AssistantPanelWindow::setCallbacks(
     std::function<void()> openFullAppCallback,
     std::function<void()> closeCallback,
     std::function<void()> panelActionCallback,
-    std::function<void(bool)> microphoneToggleCallback)
+    std::function<void(bool)> microphoneToggleCallback,
+    std::function<void(bool)> asrToggleCallback)
 {
     m_changedCallback = std::move(changedCallback);
     m_settingsCallback = std::move(settingsCallback);
@@ -72,6 +82,7 @@ void AssistantPanelWindow::setCallbacks(
     m_closeCallback = std::move(closeCallback);
     m_panelActionCallback = std::move(panelActionCallback);
     m_microphoneToggleCallback = std::move(microphoneToggleCallback);
+    m_asrToggleCallback = std::move(asrToggleCallback);
 }
 
 void AssistantPanelWindow::buildUi()
@@ -113,10 +124,13 @@ void AssistantPanelWindow::buildUi()
     m_translationCheck = new QCheckBox("Translation", this);
     m_microphoneCheck = new QCheckBox("Microphone", this);
     m_microphoneCheck->setAccessibleName("Assistant microphone toggle");
+    m_asrCheck = new QCheckBox("Transcription", this);
+    m_asrCheck->setAccessibleName("Assistant ASR transcription toggle");
     rootLayout->addWidget(m_captionsCheck);
     rootLayout->addWidget(m_showSpeakerCheck);
     rootLayout->addWidget(m_translationCheck);
     rootLayout->addWidget(m_microphoneCheck);
+    rootLayout->addWidget(m_asrCheck);
 
     m_languageLabel = new QLabel("Source: Auto | Target: English", this);
     rootLayout->addWidget(m_languageLabel);
@@ -189,6 +203,16 @@ void AssistantPanelWindow::connectSignals()
         } else {
             m_companionManager.setMicrophoneEnabled(checked);
         }
+        if (m_changedCallback) {
+            m_changedCallback();
+        }
+    });
+
+    connect(m_asrCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        if (m_asrToggleCallback) {
+            m_asrToggleCallback(checked);
+        }
+        emitPanelAction();
         if (m_changedCallback) {
             m_changedCallback();
         }

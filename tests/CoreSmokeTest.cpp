@@ -41,7 +41,7 @@ int main()
         return EXIT_FAILURE;
     }
 #else
-    if (asrEngine->engineName() != "stub") {
+    if (asrEngine->engineName() != "Stub") {
         std::cerr << "Default ASR engine should be stub.\n";
         return EXIT_FAILURE;
     }
@@ -56,10 +56,17 @@ int main()
 #endif
     }
     const auto asrResult = asrEngine->transcribePcm(PcmAudioBuffer {});
+#if LOCAL_JARVIS_ENABLE_WHISPER
     if (asrResult.ok || !asrResult.text.empty()) {
-        std::cerr << "Prepared ASR stubs must not produce real transcripts.\n";
+        std::cerr << "Whisper placeholder must not produce transcripts yet.\n";
         return EXIT_FAILURE;
     }
+#else
+    if (!asrResult.ok || asrResult.text != "Stub transcript chunk 1") {
+        std::cerr << "Stub ASR should produce deterministic local transcripts.\n";
+        return EXIT_FAILURE;
+    }
+#endif
     asrEngine->shutdown();
 
     const auto captureStatus = privacy.captureStatus();

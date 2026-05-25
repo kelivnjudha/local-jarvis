@@ -1,28 +1,18 @@
 #pragma once
 
+#include "AsrTypes.h"
+
 #include <string>
-#include <vector>
 
 namespace local_jarvis::asr {
-
-struct PcmAudioBuffer {
-    std::vector<float> samples;
-    int sampleRateHz = 16000;
-    int channelCount = 1;
-};
-
-struct AsrResult {
-    bool ok = false;
-    std::string text;
-    std::string message;
-};
 
 class AsrEngine {
 public:
     virtual ~AsrEngine() = default;
 
     virtual bool initialize(const std::string &modelPath) = 0;
-    virtual AsrResult transcribePcm(const PcmAudioBuffer &audioBuffer) = 0;
+    virtual AsrResult transcribeChunk(const AsrInputChunk &chunk) = 0;
+    virtual AsrResult transcribePcm(const PcmAudioBuffer &audioBuffer);
     virtual void shutdown() = 0;
 
     [[nodiscard]] virtual std::string engineName() const = 0;

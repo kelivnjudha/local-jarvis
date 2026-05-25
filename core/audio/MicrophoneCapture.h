@@ -20,6 +20,7 @@ public:
     [[nodiscard]] virtual double currentInputLevel() const = 0;
     [[nodiscard]] virtual MicrophoneDiagnostics diagnostics() const = 0;
     [[nodiscard]] virtual std::string lastError() const = 0;
+    virtual void setPcmAudioCallback(PcmAudioCallback callback) = 0;
 };
 
 std::unique_ptr<MicrophoneCapture> createPlatformMicrophoneCapture(

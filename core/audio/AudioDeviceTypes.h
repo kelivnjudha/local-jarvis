@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -29,13 +30,17 @@ struct MicrophoneDiagnostics {
     std::string lastError;
 };
 
-// Phase 3A keeps captured PCM frames in memory only. Windows WASAPI packets are
-// converted to normalized interleaved float samples for metering, then dropped.
+// Captured PCM stays in memory only. Windows WASAPI packets are converted to
+// normalized float samples for metering and optional local ASR, then dropped.
 struct PcmAudioFrame {
     int sampleRate = 0;
     int channelCount = 0;
     std::vector<float> samples;
+    std::int64_t startMs = 0;
+    std::int64_t endMs = 0;
     std::int64_t timestampMs = 0;
 };
+
+using PcmAudioCallback = std::function<void(const PcmAudioFrame &)>;
 
 } // namespace local_jarvis::audio

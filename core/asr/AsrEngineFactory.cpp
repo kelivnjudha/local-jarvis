@@ -2,9 +2,8 @@
 
 #if LOCAL_JARVIS_ENABLE_WHISPER
 #include "WhisperAsrEngine.h"
-#else
-#include "StubAsrEngine.h"
 #endif
+#include "StubAsrEngine.h"
 
 namespace local_jarvis::asr {
 

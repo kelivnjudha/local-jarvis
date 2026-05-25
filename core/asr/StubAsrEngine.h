@@ -7,7 +7,7 @@ namespace local_jarvis::asr {
 class StubAsrEngine final : public AsrEngine {
 public:
     bool initialize(const std::string &modelPath) override;
-    AsrResult transcribePcm(const PcmAudioBuffer &audioBuffer) override;
+    AsrResult transcribeChunk(const AsrInputChunk &chunk) override;
     void shutdown() override;
 
     [[nodiscard]] std::string engineName() const override;
@@ -15,6 +15,7 @@ public:
 
 private:
     bool m_initialized = false;
+    std::uint64_t m_nextChunkNumber = 1;
 };
 
 } // namespace local_jarvis::asr

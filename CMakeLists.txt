@@ -47,9 +47,11 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/audio/AudioLevelMeter.cpp
     core/audio/DummyAudioCapture.cpp
     core/audio/MicrophoneCapture.cpp
+    core/asr/AudioChunkBuffer.cpp
     core/screen/ScreenCapture.cpp
     core/asr/AsrEngine.cpp
     core/asr/AsrEngineFactory.cpp
+    core/asr/AsrWorker.cpp
     core/ocr/OcrEngine.cpp
     core/llm/LlmEngine.cpp
     core/storage/Storage.cpp
@@ -62,13 +64,12 @@ if(LOCAL_JARVIS_ENABLE_WHISPER)
         core/asr/WhisperAsrEngine.cpp
     )
 
-    if(EXISTS "${LOCAL_JARVIS_WHISPER_SOURCE_DIR}/CMakeLists.txt")
-        add_subdirectory("${LOCAL_JARVIS_WHISPER_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/whisper.cpp" EXCLUDE_FROM_ALL)
-        set(LOCAL_JARVIS_WHISPER_AVAILABLE TRUE)
-    else()
-        message(WARNING "LOCAL_JARVIS_ENABLE_WHISPER is ON, but whisper.cpp was not found at ${LOCAL_JARVIS_WHISPER_SOURCE_DIR}. Building the WhisperAsrEngine stub without linking whisper.cpp.")
-        set(LOCAL_JARVIS_WHISPER_AVAILABLE FALSE)
+    if(NOT EXISTS "${LOCAL_JARVIS_WHISPER_SOURCE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "LOCAL_JARVIS_ENABLE_WHISPER is ON, but whisper.cpp was not found at ${LOCAL_JARVIS_WHISPER_SOURCE_DIR}. Set LOCAL_JARVIS_WHISPER_SOURCE_DIR to a local whisper.cpp checkout or configure with LOCAL_JARVIS_ENABLE_WHISPER=OFF.")
     endif()
+
+    add_subdirectory("${LOCAL_JARVIS_WHISPER_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/third_party/whisper.cpp" EXCLUDE_FROM_ALL)
+    set(LOCAL_JARVIS_WHISPER_AVAILABLE TRUE)
 else()
     list(APPEND LOCAL_JARVIS_CORE_SOURCES
         core/asr/StubAsrEngine.cpp
@@ -120,7 +121,7 @@ if(LOCAL_JARVIS_ENABLE_WHISPER AND LOCAL_JARVIS_WHISPER_AVAILABLE AND TARGET whi
     target_compile_definitions(local_jarvis_core PRIVATE LOCAL_JARVIS_WHISPER_LINKED=1)
 else()
     if(LOCAL_JARVIS_ENABLE_WHISPER AND LOCAL_JARVIS_WHISPER_AVAILABLE AND NOT TARGET whisper)
-        message(WARNING "whisper.cpp was found, but no CMake target named 'whisper' was exported. Local Jarvis will build the WhisperAsrEngine stub without linking whisper.cpp.")
+        message(FATAL_ERROR "LOCAL_JARVIS_ENABLE_WHISPER is ON and whisper.cpp was found, but no CMake target named 'whisper' was exported.")
     endif()
     target_compile_definitions(local_jarvis_core PRIVATE LOCAL_JARVIS_WHISPER_LINKED=0)
 endif()

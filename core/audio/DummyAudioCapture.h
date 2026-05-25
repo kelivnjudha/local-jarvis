@@ -35,6 +35,7 @@ public:
     [[nodiscard]] double currentInputLevel() const override;
     [[nodiscard]] MicrophoneDiagnostics diagnostics() const override;
     [[nodiscard]] std::string lastError() const override;
+    void setPcmAudioCallback(PcmAudioCallback callback) override;
 
 private:
     void startWorkerIfNeeded();
@@ -58,6 +59,7 @@ private:
     std::string m_lastError;
     MicrophoneDiagnostics m_diagnostics;
     TranscriptCallback m_transcriptCallback;
+    PcmAudioCallback m_pcmAudioCallback;
 };
 
 } // namespace local_jarvis::audio

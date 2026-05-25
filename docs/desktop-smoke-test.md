@@ -1,6 +1,6 @@
 # Desktop Smoke Test
 
-Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold, companion shell, caption pipeline, and Phase 3A microphone foundation. It does not require system audio capture, screen capture, OCR, ASR, cloud services, or downloaded models.
+Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold, companion shell, caption pipeline, Phase 3A microphone foundation, and Phase 3B local ASR scaffold. It does not require system audio capture, screen capture, OCR, cloud services, whisper.cpp, or downloaded models.
 
 ## Launch
 
@@ -11,6 +11,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
+- Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the caption bubble appears near the companion when captions are enabled.
 - Confirm the companion shows the current mode's outfit/accessory labels.
@@ -111,7 +112,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the input level meter moves when speaking into the selected microphone.
 - Confirm diagnostics counters continue updating during session microphone capture.
 - Confirm the companion switches to the Listening animation while microphone capture is active.
-- Confirm the caption bubble shows a non-transcription placeholder such as "Mic active. Transcription will be added in the next phase."
+- Confirm the caption bubble shows a clear microphone placeholder when ASR is off, such as "Mic active. Transcription is off."
 - Disable Microphone.
 - Confirm the microphone stops cleanly and the companion returns to its fallback animation state.
 - Re-enable Microphone, then close the app while capture is active.
@@ -121,10 +122,35 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Switch Audio capture mode back to Dummy audio.
 - Confirm dummy captions and dummy transcript/session flow still work.
 
+## Local ASR Scaffold
+
+- Confirm ASR is OFF by default unless the developer previously enabled it.
+- Confirm the ASR backend shows Stub when `LOCAL_JARVIS_ENABLE_WHISPER=OFF`.
+- Enable ASR without enabling the microphone.
+- Confirm ASR status is visible and no microphone capture starts automatically.
+- Run Test Mic Level with ASR enabled.
+- Confirm the mic test does not create a session or transcript segment.
+- Start a session.
+- Enable Microphone explicitly.
+- Enable ASR if it is not already enabled.
+- Confirm ASR status moves through Listening or Processing while microphone PCM is active.
+- Confirm the caption bubble shows stub transcript text such as "Stub transcript chunk 1".
+- Confirm the Transcript panel shows the same stub transcript segment.
+- Confirm SQLite stores a transcript segment with source `microphone_asr_stub`.
+- Disable ASR.
+- Confirm microphone capture can remain controlled independently.
+- Stop the session.
+- Confirm ASR stops cleanly and does not process new chunks after session stop.
+- Re-enable ASR and close the app while capture is active.
+- Confirm the app exits cleanly.
+- Confirm no raw audio files are created in the repo, build directories, or app data.
+- Confirm privacy events are written for ASR enable, disable, chunk processed, and error cases when applicable.
+
 ## Regression Boundaries
 
 - Confirm no overlay UI appears.
 - Confirm real microphone capture starts only after explicit user action.
 - Confirm no system audio or screen capture starts.
-- Confirm no OCR or ASR path runs.
+- Confirm no OCR path runs.
+- Confirm no cloud ASR path runs.
 - Confirm all capture status remains visible in the Session tab.

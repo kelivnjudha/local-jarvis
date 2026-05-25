@@ -150,6 +150,12 @@ void DummyAudioCapture::setTranscriptCallback(TranscriptCallback callback)
     m_transcriptCallback = std::move(callback);
 }
 
+void DummyAudioCapture::setPcmAudioCallback(PcmAudioCallback callback)
+{
+    std::lock_guard lock(m_mutex);
+    m_pcmAudioCallback = std::move(callback);
+}
+
 double DummyAudioCapture::currentInputLevel() const
 {
     std::lock_guard lock(m_mutex);
@@ -251,11 +257,13 @@ void DummyAudioCapture::workerLoop()
 void DummyAudioCapture::emitTranscript(bool microphoneActive, bool systemAudioActive)
 {
     TranscriptCallback callback;
+    PcmAudioCallback pcmCallback;
     std::uint64_t sequence = 0;
     std::int64_t startMs = 0;
     {
         std::lock_guard lock(m_mutex);
         callback = m_transcriptCallback;
+        pcmCallback = m_pcmAudioCallback;
         sequence = ++m_sequence;
         startMs = m_nextStartMs;
         m_nextStartMs += m_interval.count();
@@ -268,6 +276,19 @@ void DummyAudioCapture::emitTranscript(bool microphoneActive, bool systemAudioAc
             m_diagnostics.smoothedLevel = level;
             m_diagnostics.lastCallbackTimeMs = nowMs();
         }
+    }
+
+    if (microphoneActive && pcmCallback) {
+        const std::size_t frameCount = static_cast<std::size_t>(std::max<std::int64_t>(1, m_interval.count() * 16));
+        std::vector<float> samples(frameCount, static_cast<float>(dummyLevelForSequence(sequence)));
+        pcmCallback(PcmAudioFrame {
+            .sampleRate = 16000,
+            .channelCount = 1,
+            .samples = std::move(samples),
+            .startMs = startMs,
+            .endMs = startMs + m_interval.count(),
+            .timestampMs = nowMs()
+        });
     }
 
     if (!callback) {

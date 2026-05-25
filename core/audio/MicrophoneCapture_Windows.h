@@ -31,6 +31,7 @@ public:
     [[nodiscard]] double currentInputLevel() const override;
     [[nodiscard]] MicrophoneDiagnostics diagnostics() const override;
     [[nodiscard]] std::string lastError() const override;
+    void setPcmAudioCallback(PcmAudioCallback callback) override;
 
 private:
     void captureLoop();
@@ -47,6 +48,7 @@ private:
     std::string m_selectedDeviceId;
     std::string m_lastError;
     TranscriptCallback m_transcriptCallback;
+    PcmAudioCallback m_pcmAudioCallback;
     bool m_microphoneActive = false;
     bool m_systemAudioActive = false;
     bool m_stopRequested = false;

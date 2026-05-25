@@ -88,7 +88,7 @@ QString languageDisplay(const std::string &language)
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_audioCapture(m_privacyManager)
-    , m_asrEngine(local_jarvis::asr::createDefaultAsrEngine())
+    , m_asrWorker(std::make_unique<local_jarvis::asr::AsrWorker>(local_jarvis::asr::createDefaultAsrEngine()))
     , m_modelManager(m_ollamaClient, m_systemCheck)
     , m_companionManager(m_storage)
     , m_captionManager(m_storage)
@@ -97,6 +97,7 @@ MainWindow::MainWindow(QWidget *parent)
 {
     m_realMicrophoneCapture = local_jarvis::audio::createPlatformMicrophoneCapture(m_privacyManager);
     m_activeMicrophoneCapture = &m_audioCapture;
+    installPcmAudioCallback();
     buildUi();
     initializeStorage();
     initializeCompanion();
@@ -110,6 +111,8 @@ MainWindow::~MainWindow()
     m_destroying.store(true);
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
+    stopAsrPipeline();
+    clearPcmAudioCallback();
     stopMicrophoneForShutdown();
     m_assistantPanelWindow.reset();
     m_captionBubbleWindow.reset();
@@ -125,6 +128,8 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_companionAnimationResetTimer.stop();
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
+    stopAsrPipeline();
+    clearPcmAudioCallback();
     stopMicrophoneForShutdown();
 
     if (m_assistantPanelWindow) {
@@ -230,6 +235,27 @@ void MainWindow::buildUi()
     m_microphoneErrorLabel->setWordWrap(true);
     microphoneLayout->addWidget(m_microphoneErrorLabel);
     rootLayout->addWidget(microphoneGroup);
+
+    auto *asrGroup = new QGroupBox("Local ASR", central);
+    auto *asrLayout = new QVBoxLayout(asrGroup);
+    m_asrEnabledCheckBox = new QCheckBox("Enable local transcription", asrGroup);
+    m_asrEnabledCheckBox->setAccessibleName("ASR transcription toggle");
+    asrLayout->addWidget(m_asrEnabledCheckBox);
+    m_asrBackendLabel = new QLabel(asrGroup);
+    m_asrRuntimeStatusLabel = new QLabel(asrGroup);
+    m_asrStatsLabel = new QLabel(asrGroup);
+    m_asrLastSegmentLabel = new QLabel("Last transcript: none", asrGroup);
+    m_asrErrorLabel = new QLabel(asrGroup);
+    m_asrRuntimeStatusLabel->setWordWrap(true);
+    m_asrStatsLabel->setWordWrap(true);
+    m_asrLastSegmentLabel->setWordWrap(true);
+    m_asrErrorLabel->setWordWrap(true);
+    asrLayout->addWidget(m_asrBackendLabel);
+    asrLayout->addWidget(m_asrRuntimeStatusLabel);
+    asrLayout->addWidget(m_asrStatsLabel);
+    asrLayout->addWidget(m_asrLastSegmentLabel);
+    asrLayout->addWidget(m_asrErrorLabel);
+    rootLayout->addWidget(asrGroup);
 
     auto *statusGroup = new QGroupBox("Capture Status", central);
     auto *statusLayout = new QVBoxLayout(statusGroup);
@@ -417,6 +443,12 @@ void MainWindow::connectSignals()
         }
 
         m_lastStoppedSessionId.reset();
+        if (result.session.has_value()) {
+            m_audioChunkBuffer.reset(result.session->id);
+        }
+        if (m_asrEnabled.load()) {
+            startAsrPipelineIfNeeded();
+        }
         refreshStatus();
     });
 
@@ -439,6 +471,10 @@ void MainWindow::connectSignals()
             }
         }
 
+        m_audioChunkBuffer.reset();
+        if (m_asrWorker) {
+            m_asrWorker->stop();
+        }
         refreshStatus();
     });
 
@@ -478,6 +514,10 @@ void MainWindow::connectSignals()
         } else {
             startMicrophoneTest();
         }
+    });
+
+    connect(m_asrEnabledCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        setAsrEnabled(checked);
     });
 
     connect(&m_microphoneStatusTimer, &QTimer::timeout, this, [this]() {
@@ -643,6 +683,21 @@ void MainWindow::ensureSessionManager()
             refreshStatus();
         });
     });
+    if (m_asrWorker) {
+        m_asrWorker->setSegmentCallback([this](const local_jarvis::asr::AsrTranscriptSegment &segment) {
+            postToUi([this, segment]() {
+                handleAsrTranscriptSegment(segment);
+            });
+        });
+        m_asrWorker->setStatusCallback([this](local_jarvis::asr::AsrStatus status, const std::string &message) {
+            postToUi([this, status, message]() {
+                if (status == local_jarvis::asr::AsrStatus::Error) {
+                    recordAsrEvent("asr_error", message);
+                }
+                refreshStatus();
+            });
+        });
+    }
     m_processingQueue.setStatusCallback([this](const std::string &message) {
         postToUi([this, message]() {
             m_aiProcessingStatusLabel->setText(QString("AI processing: %1").arg(QString::fromStdString(message)));
@@ -664,13 +719,25 @@ void MainWindow::loadAudioSettings()
         const QSignalBlocker blocker(m_audioModeCombo);
         m_audioModeCombo->setCurrentIndex(mode == "microphone" ? 1 : 0);
     }
+    clearPcmAudioCallback();
     m_activeMicrophoneCapture = isRealMicrophoneMode() && m_realMicrophoneCapture
         ? m_realMicrophoneCapture.get()
         : static_cast<local_jarvis::audio::MicrophoneCapture *>(&m_audioCapture);
+    installPcmAudioCallback();
 
     const auto selectedDevice = m_storage.getSetting("audio.input_device_id").value_or("");
     if (!selectedDevice.empty()) {
         activeMicrophoneCapture().selectInputDevice(selectedDevice);
+    }
+
+    const bool asrEnabled = m_storage.getSetting("asr.enabled").value_or("false") == "true";
+    m_asrEnabled.store(asrEnabled);
+    if (m_asrEnabledCheckBox) {
+        const QSignalBlocker blocker(m_asrEnabledCheckBox);
+        m_asrEnabledCheckBox->setChecked(asrEnabled);
+    }
+    if (asrEnabled) {
+        startAsrPipelineIfNeeded();
     }
 
     refreshMicrophoneDevices();
@@ -782,14 +849,20 @@ void MainWindow::refreshMicrophoneRuntimeUi()
     if (m_companionManager.state().microphoneEnabled != microphoneActive) {
         m_companionManager.setMicrophoneEnabled(microphoneActive);
         if (microphoneActive && m_captionBubbleWindow) {
-            m_captionBubbleWindow->setMicrophonePlaceholderText("Mic active. Transcription will be added in the next phase.");
+            m_captionBubbleWindow->setMicrophonePlaceholderText(
+                m_asrEnabled.load() ? QString {} : QString("Mic active. Transcription is off."));
         } else if (m_captionBubbleWindow) {
             m_captionBubbleWindow->setMicrophonePlaceholderText("");
         }
         applyCompanionState();
     }
 
+    if (m_asrWorker && m_asrEnabled.load()) {
+        m_asrWorker->setListening(microphoneActive && sessionActive());
+    }
+
     refreshCompanionSettings();
+    refreshStatus();
 }
 
 void MainWindow::handleAudioModeChanged(int)
@@ -803,10 +876,12 @@ void MainWindow::handleAudioModeChanged(int)
         return;
     }
 
+    clearPcmAudioCallback();
     activeMicrophoneCapture().stopMicrophoneCapture();
     m_activeMicrophoneCapture = isRealMicrophoneMode() && m_realMicrophoneCapture
         ? m_realMicrophoneCapture.get()
         : static_cast<local_jarvis::audio::MicrophoneCapture *>(&m_audioCapture);
+    installPcmAudioCallback();
 
     if (m_storage.isOpen()) {
         m_storage.setSetting("audio.capture_mode", isRealMicrophoneMode() ? "microphone" : "dummy");
@@ -916,6 +991,160 @@ void MainWindow::finishMicrophoneTest()
     refreshMicrophoneRuntimeUi();
 }
 
+void MainWindow::setAsrEnabled(bool enabled)
+{
+    if (m_asrEnabled.exchange(enabled) == enabled) {
+        refreshStatus();
+        return;
+    }
+
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("asr.enabled", enabled ? "true" : "false");
+    }
+
+    if (m_asrEnabledCheckBox) {
+        const QSignalBlocker blocker(m_asrEnabledCheckBox);
+        m_asrEnabledCheckBox->setChecked(enabled);
+    }
+
+    if (enabled) {
+        if (auto sessionId = m_sessionManager ? m_sessionManager->currentSessionId() : std::nullopt) {
+            m_audioChunkBuffer.reset(*sessionId);
+        }
+        startAsrPipelineIfNeeded();
+        if (m_captionBubbleWindow) {
+            m_captionBubbleWindow->setDummyCaptionsEnabled(false);
+            m_captionBubbleWindow->setMicrophonePlaceholderText("");
+        }
+        if (m_captionManager.state().captionMode == local_jarvis::caption::CaptionMode::Off) {
+            m_captionManager.setCaptionMode(local_jarvis::caption::CaptionMode::OriginalOnly);
+        }
+        m_captionManager.setCaptionsEnabled(true);
+        m_companionManager.setCaptionsVisible(true);
+        recordAsrEvent("asr_enabled", "Local ASR enabled with backend " + asrBackendText().toStdString() + ".");
+    } else {
+        m_audioChunkBuffer.reset();
+        stopAsrPipeline();
+        if (m_captionBubbleWindow) {
+            m_captionBubbleWindow->setDummyCaptionsEnabled(true);
+        }
+        recordAsrEvent("asr_disabled", "Local ASR disabled.");
+    }
+
+    refreshStatus();
+    applyCompanionState();
+}
+
+void MainWindow::startAsrPipelineIfNeeded()
+{
+    if (!m_asrEnabled.load() || !m_asrWorker) {
+        return;
+    }
+
+    if (!m_asrWorker->start()) {
+        const auto stats = m_asrWorker->stats();
+        recordAsrEvent("asr_error", stats.lastError.empty() ? "ASR worker could not start." : stats.lastError);
+        return;
+    }
+
+    m_asrWorker->setListening(activeMicrophoneCapture().isMicrophoneActive() && sessionActive());
+}
+
+void MainWindow::stopAsrPipeline()
+{
+    if (m_asrWorker) {
+        m_asrWorker->stop();
+    }
+}
+
+void MainWindow::installPcmAudioCallback()
+{
+    activeMicrophoneCapture().setPcmAudioCallback([this](const local_jarvis::audio::PcmAudioFrame &frame) {
+        handlePcmAudioFrame(frame);
+    });
+}
+
+void MainWindow::clearPcmAudioCallback()
+{
+    activeMicrophoneCapture().setPcmAudioCallback(nullptr);
+}
+
+void MainWindow::handlePcmAudioFrame(const local_jarvis::audio::PcmAudioFrame &frame)
+{
+    if (m_destroying.load() || !m_asrEnabled.load() || !m_asrWorker || !m_asrWorker->isRunning()) {
+        return;
+    }
+
+    if (!m_sessionManager || m_sessionManager->state() != local_jarvis::session::SessionState::Active) {
+        return;
+    }
+
+    const auto sessionId = m_sessionManager->currentSessionId();
+    if (!sessionId.has_value()) {
+        return;
+    }
+
+    auto chunks = m_audioChunkBuffer.appendPcm(
+        *sessionId,
+        frame.startMs,
+        frame.sampleRate,
+        frame.channelCount,
+        frame.samples);
+
+    for (const auto &chunk : chunks) {
+        m_asrWorker->enqueueChunk(chunk);
+    }
+}
+
+void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscriptSegment &segment)
+{
+    if (m_destroying.load()) {
+        return;
+    }
+
+    m_captionManager.addSegment(local_jarvis::asr::toCaptionSegment(segment));
+    if (m_captionBubbleWindow) {
+        m_captionBubbleWindow->setMicrophonePlaceholderText("");
+        m_captionBubbleWindow->refreshCaptionText();
+        m_captionBubbleWindow->applyState();
+    }
+
+    appendTranscriptLine(local_jarvis::audio::TranscriptEvent {
+        .startMs = segment.startMs,
+        .endMs = segment.endMs,
+        .speaker = segment.speaker,
+        .text = segment.text,
+        .source = asrBackendText().contains("Whisper") ? "microphone_asr_whisper" : "microphone_asr_stub"
+    });
+
+    if (m_asrLastSegmentLabel) {
+        m_asrLastSegmentLabel->setText(QString("Last transcript: [%1-%2 ms] %3")
+            .arg(segment.startMs)
+            .arg(segment.endMs)
+            .arg(QString::fromStdString(segment.text)));
+    }
+
+    const auto currentSessionId = m_sessionManager ? m_sessionManager->currentSessionId() : std::nullopt;
+    if (segment.isFinal && currentSessionId.has_value() && *currentSessionId == segment.sessionId) {
+        const auto source = asrBackendText().contains("Whisper") ? "microphone_asr_whisper" : "microphone_asr_stub";
+        const auto storedId = m_storage.addTranscriptSegment(local_jarvis::storage::TranscriptSegmentInput {
+            .sessionId = segment.sessionId,
+            .startMs = segment.startMs,
+            .endMs = segment.endMs,
+            .speaker = segment.speaker,
+            .text = segment.text,
+            .source = source
+        });
+        if (!storedId.has_value()) {
+            recordAsrEvent("asr_error", "Failed to store ASR transcript segment: " + m_storage.lastError(), segment.sessionId);
+        }
+    }
+
+    recordAsrEvent("asr_chunk_processed", segment.text, segment.sessionId);
+    setCompanionAnimation(local_jarvis::companion::AnimationState::TakingNote);
+    refreshStatus();
+}
+
 void MainWindow::stopMicrophoneForShutdown()
 {
     const bool wasActive = activeMicrophoneCapture().isMicrophoneActive();
@@ -949,6 +1178,31 @@ void MainWindow::recordMicrophonePrivacyEvent(const std::string &eventType, cons
 
     m_storage.addPrivacyEvent(local_jarvis::storage::PrivacyEventInput {
         .sessionId = sessionId,
+        .eventType = eventType,
+        .details = details
+    });
+
+    appendLifecycleEvent(QString("%1: %2")
+        .arg(QString::fromStdString(eventType),
+             QString::fromStdString(details)));
+}
+
+void MainWindow::recordAsrEvent(
+    const std::string &eventType,
+    const std::string &details,
+    const std::optional<std::string> &sessionId)
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    std::optional<std::string> effectiveSessionId = sessionId;
+    if (!effectiveSessionId.has_value() && m_sessionManager) {
+        effectiveSessionId = m_sessionManager->currentSessionId();
+    }
+
+    m_storage.addPrivacyEvent(local_jarvis::storage::PrivacyEventInput {
+        .sessionId = effectiveSessionId,
         .eventType = eventType,
         .details = details
     });
@@ -997,6 +1251,27 @@ QString MainWindow::microphoneDiagnosticsText() const
              QString::number(diagnostics.smoothedLevel, 'f', 4),
              lastCallback,
              error);
+}
+
+QString MainWindow::asrBackendText() const
+{
+    if (!m_asrWorker) {
+        return "Unavailable";
+    }
+
+#if LOCAL_JARVIS_ENABLE_WHISPER
+    return QString("%1").arg(QString::fromStdString(m_asrWorker->engineName()));
+#else
+    return QString("%1").arg(QString::fromStdString(m_asrWorker->engineName()));
+#endif
+}
+
+QString MainWindow::asrStatusText() const
+{
+    if (!m_asrWorker) {
+        return "Disabled";
+    }
+    return QString::fromStdString(local_jarvis::asr::toString(m_asrWorker->stats().status));
 }
 
 bool MainWindow::sessionActive() const
@@ -1061,10 +1336,28 @@ void MainWindow::refreshStatus()
              systemAudioRuntime,
              enabledText(status.screenCaptureEnabled)));
 
-    const QString asrEngineName = m_asrEngine
-        ? QString::fromStdString(m_asrEngine->engineName())
-        : "unavailable";
-    m_asrStatusLabel->setText(QString("ASR engine: %1").arg(asrEngineName));
+    const auto asrStats = m_asrWorker ? m_asrWorker->stats() : local_jarvis::asr::AsrWorkerStats {};
+    const QString asrEngineName = asrBackendText();
+    m_asrStatusLabel->setText(QString("ASR: %1 | %2")
+        .arg(asrEngineName, QString::fromStdString(local_jarvis::asr::toString(asrStats.status))));
+    if (m_asrBackendLabel) {
+        m_asrBackendLabel->setText(QString("ASR backend: %1").arg(asrEngineName));
+    }
+    if (m_asrRuntimeStatusLabel) {
+        m_asrRuntimeStatusLabel->setText(QString("ASR status: %1 | Toggle: %2")
+            .arg(QString::fromStdString(local_jarvis::asr::toString(asrStats.status)),
+                 m_asrEnabled.load() ? "ON" : "OFF"));
+    }
+    if (m_asrStatsLabel) {
+        m_asrStatsLabel->setText(QString("Chunks queued: %1 | processed: %2 | pending: %3")
+            .arg(QString::number(asrStats.chunksQueued),
+                 QString::number(asrStats.chunksProcessed),
+                 QString::number(asrStats.pendingChunks)));
+    }
+    if (m_asrErrorLabel) {
+        m_asrErrorLabel->setText(QString("Last ASR error: %1")
+            .arg(asrStats.lastError.empty() ? "none" : QString::fromStdString(asrStats.lastError)));
+    }
     if (m_aiProcessingStatusLabel->text().isEmpty()) {
         m_aiProcessingStatusLabel->setText("AI processing: idle");
     }
@@ -1088,6 +1381,10 @@ void MainWindow::refreshStatus()
     if (m_microphoneTestButton) {
         m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
         m_microphoneTestButton->setEnabled(!active || m_microphoneTestActive);
+    }
+    if (m_asrEnabledCheckBox) {
+        const QSignalBlocker asrBlocker(m_asrEnabledCheckBox);
+        m_asrEnabledCheckBox->setChecked(m_asrEnabled.load());
     }
     if (m_audioModeCombo) {
         m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive);
@@ -1147,6 +1444,7 @@ void MainWindow::initializeCompanion()
     m_companionManager.setCaptionMaxLines(m_captionManager.state().maxLines);
     m_companionWindow = std::make_unique<CompanionWindow>(m_companionManager);
     m_captionBubbleWindow = std::make_unique<CaptionBubbleWindow>(m_companionManager, m_captionManager, m_dummyCaptionSource);
+    m_captionBubbleWindow->setDummyCaptionsEnabled(!m_asrEnabled.load());
     m_assistantPanelWindow = std::make_unique<AssistantPanelWindow>(m_companionManager, m_captionManager);
 
     connect(&m_companionAnimationResetTimer, &QTimer::timeout, this, [this]() {
@@ -1200,6 +1498,9 @@ void MainWindow::initializeCompanion()
         },
         [this](bool enabled) {
             setMicrophoneRequested(enabled);
+        },
+        [this](bool enabled) {
+            setAsrEnabled(enabled);
         });
 
     applyCompanionState();
@@ -1220,6 +1521,10 @@ void MainWindow::applyCompanionState()
         m_captionBubbleWindow->setAnchorPosition(anchor);
     }
     if (m_assistantPanelWindow) {
+        m_assistantPanelWindow->setAsrState(
+            m_asrEnabled.load(),
+            QString("%1 (%2)")
+                .arg(asrStatusText(), asrBackendText()));
         m_assistantPanelWindow->applyState();
         m_assistantPanelWindow->setAnchorPosition(anchor);
     }
