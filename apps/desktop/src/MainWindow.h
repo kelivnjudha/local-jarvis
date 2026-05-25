@@ -1,12 +1,14 @@
 #pragma once
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPushButton>
 #include <QTabWidget>
 #include <QTextEdit>
+#include <QTimer>
 
 #include <atomic>
 #include <functional>
@@ -20,6 +22,7 @@
 #include "ai/OllamaClient.h"
 #include "asr/AsrEngine.h"
 #include "audio/DummyAudioCapture.h"
+#include "companion/CompanionManager.h"
 #include "privacy/PrivacyManager.h"
 #include "processing/ProcessingQueue.h"
 #include "session/SessionManager.h"
@@ -34,6 +37,9 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow() override;
 
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
 private:
     void buildUi();
     void connectSignals();
@@ -42,6 +48,14 @@ private:
     void refreshStatus();
     void updateSetupStatus(const local_jarvis::setup::SetupStatus &status);
     void refreshSettings();
+    void initializeCompanion();
+    void applyCompanionState();
+    void refreshCompanionSettings();
+    void setCompanionAnimation(local_jarvis::companion::AnimationState state);
+    void scheduleCompanionIdle();
+    void showCompanion();
+    void hideCompanion();
+    void resetCompanionPosition();
     void refreshProcessedOutputs();
     void appendLifecycleEvent(const QString &message);
     void appendSetupLog(const QString &message);
@@ -82,6 +96,10 @@ private:
     QPushButton *m_recheckOllamaButton = nullptr;
     QPushButton *m_pullFallbackButton = nullptr;
     QTextEdit *m_deleteModelInstructions = nullptr;
+    QLabel *m_companionStatusLabel = nullptr;
+    QPushButton *m_showCompanionButton = nullptr;
+    QPushButton *m_hideCompanionButton = nullptr;
+    QPushButton *m_resetCompanionPositionButton = nullptr;
 
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
@@ -90,13 +108,18 @@ private:
     local_jarvis::setup::SystemCheck m_systemCheck;
     local_jarvis::ai::ModelManager m_modelManager;
     local_jarvis::storage::Storage m_storage;
+    local_jarvis::companion::CompanionManager m_companionManager;
     local_jarvis::setup::SetupManager m_setupManager;
     local_jarvis::setup::SetupStatus m_setupStatus;
     local_jarvis::processing::ProcessingQueue m_processingQueue;
     std::unique_ptr<local_jarvis::session::SessionManager> m_sessionManager;
+    std::unique_ptr<class CompanionWindow> m_companionWindow;
+    std::unique_ptr<class CaptionBubbleWindow> m_captionBubbleWindow;
+    std::unique_ptr<class AssistantPanelWindow> m_assistantPanelWindow;
     std::optional<std::string> m_lastStoppedSessionId;
     std::thread m_setupThread;
     std::thread m_modelPullThread;
+    QTimer m_companionAnimationResetTimer;
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };

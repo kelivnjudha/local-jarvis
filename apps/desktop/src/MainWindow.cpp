@@ -2,12 +2,16 @@
 
 #include "ai/AiTypes.h"
 #include "asr/AsrEngineFactory.h"
+#include "companion/AssistantPanelWindow.h"
+#include "companion/CaptionBubbleWindow.h"
+#include "companion/CompanionWindow.h"
 
 #include <QDateTime>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QPoint>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -38,21 +42,45 @@ MainWindow::MainWindow(QWidget *parent)
     , m_audioCapture(m_privacyManager)
     , m_asrEngine(local_jarvis::asr::createDefaultAsrEngine())
     , m_modelManager(m_ollamaClient, m_systemCheck)
+    , m_companionManager(m_storage)
     , m_setupManager(m_storage, m_modelManager, m_ollamaClient)
     , m_processingQueue(m_storage, m_ollamaClient)
 {
     buildUi();
     initializeStorage();
+    initializeCompanion();
     connectSignals();
     refreshStatus();
+    refreshCompanionSettings();
 }
 
 MainWindow::~MainWindow()
 {
     m_destroying.store(true);
+    m_assistantPanelWindow.reset();
+    m_captionBubbleWindow.reset();
+    m_companionWindow.reset();
     m_processingQueue.setStatusCallback(nullptr);
     m_sessionManager.reset();
     joinWorkerThreads();
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+    m_destroying.store(true);
+    m_companionAnimationResetTimer.stop();
+
+    if (m_assistantPanelWindow) {
+        m_assistantPanelWindow->close();
+    }
+    if (m_captionBubbleWindow) {
+        m_captionBubbleWindow->close();
+    }
+    if (m_companionWindow) {
+        m_companionWindow->close();
+    }
+
+    QMainWindow::closeEvent(event);
 }
 
 void MainWindow::buildUi()
@@ -189,6 +217,24 @@ void MainWindow::buildUi()
     m_deleteModelInstructions->setReadOnly(true);
     m_deleteModelInstructions->setPlainText("To delete a local model, run this in a terminal:\n\nollama rm gemma4:e4b\n\nLocal Jarvis does not delete models automatically.");
     settingsLayout->addWidget(m_deleteModelInstructions);
+
+    auto *companionGroup = new QGroupBox("Companion", settingsPage);
+    auto *companionLayout = new QVBoxLayout(companionGroup);
+    m_companionStatusLabel = new QLabel(companionGroup);
+    m_companionStatusLabel->setWordWrap(true);
+    companionLayout->addWidget(m_companionStatusLabel);
+
+    auto *companionButtonLayout = new QHBoxLayout();
+    m_showCompanionButton = new QPushButton("Show Companion", companionGroup);
+    m_hideCompanionButton = new QPushButton("Hide Companion", companionGroup);
+    m_resetCompanionPositionButton = new QPushButton("Reset Companion Position", companionGroup);
+    companionButtonLayout->addWidget(m_showCompanionButton);
+    companionButtonLayout->addWidget(m_hideCompanionButton);
+    companionButtonLayout->addWidget(m_resetCompanionPositionButton);
+    companionButtonLayout->addStretch();
+    companionLayout->addLayout(companionButtonLayout);
+    settingsLayout->addWidget(companionGroup);
+
     settingsLayout->addStretch();
 
     m_tabs->addTab(settingsPage, "Settings");
@@ -296,6 +342,18 @@ void MainWindow::connectSignals()
 
     connect(m_pullFallbackButton, &QPushButton::clicked, this, [this]() {
         runPullModelAsync(QString::fromUtf8(local_jarvis::ai::kFallbackGemmaModel));
+    });
+
+    connect(m_showCompanionButton, &QPushButton::clicked, this, [this]() {
+        showCompanion();
+    });
+
+    connect(m_hideCompanionButton, &QPushButton::clicked, this, [this]() {
+        hideCompanion();
+    });
+
+    connect(m_resetCompanionPositionButton, &QPushButton::clicked, this, [this]() {
+        resetCompanionPosition();
     });
 }
 
@@ -414,6 +472,134 @@ void MainWindow::refreshSettings()
     if (m_modelNameEdit->text().isEmpty()) {
         m_modelNameEdit->setText(QString::fromStdString(currentModel));
     }
+}
+
+void MainWindow::initializeCompanion()
+{
+    if (!m_storage.isOpen()) {
+        refreshCompanionSettings();
+        return;
+    }
+
+    m_companionManager.loadSettings();
+    m_companionWindow = std::make_unique<CompanionWindow>(m_companionManager);
+    m_captionBubbleWindow = std::make_unique<CaptionBubbleWindow>(m_companionManager);
+    m_assistantPanelWindow = std::make_unique<AssistantPanelWindow>(m_companionManager);
+
+    connect(&m_companionAnimationResetTimer, &QTimer::timeout, this, [this]() {
+        m_companionManager.animationStateMachine().onTimeout();
+        m_companionManager.syncAnimationState();
+        applyCompanionState();
+    });
+    m_companionAnimationResetTimer.setSingleShot(true);
+
+    m_companionWindow->setClickedCallback([this]() {
+        m_companionManager.setPanelVisible(true);
+        setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
+    });
+    m_companionWindow->setMovedCallback([this](const QPoint &position) {
+        m_companionManager.setAnchorPosition(position.x(), position.y());
+        setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
+    });
+    m_captionBubbleWindow->setCaptionUpdatedCallback([this]() {
+        setCompanionAnimation(local_jarvis::companion::AnimationState::TakingNote);
+    });
+    m_assistantPanelWindow->setCallbacks(
+        [this]() {
+            applyCompanionState();
+        },
+        [this]() {
+            setCompanionAnimation(local_jarvis::companion::AnimationState::Working);
+            if (m_tabs) {
+                m_tabs->setCurrentIndex(2);
+            }
+            show();
+            raise();
+            activateWindow();
+        },
+        [this]() {
+            setCompanionAnimation(local_jarvis::companion::AnimationState::Working);
+            show();
+            raise();
+            activateWindow();
+        },
+        [this]() {
+            applyCompanionState();
+        },
+        [this]() {
+            setCompanionAnimation(local_jarvis::companion::AnimationState::Working);
+        });
+
+    applyCompanionState();
+}
+
+void MainWindow::applyCompanionState()
+{
+    m_companionManager.syncAnimationState();
+    const auto &state = m_companionManager.state();
+    const QPoint anchor(state.anchorX, state.anchorY);
+
+    if (m_companionWindow) {
+        m_companionWindow->applyState();
+    }
+    if (m_captionBubbleWindow) {
+        m_captionBubbleWindow->applyState();
+        m_captionBubbleWindow->setAnchorPosition(anchor);
+    }
+    if (m_assistantPanelWindow) {
+        m_assistantPanelWindow->applyState();
+        m_assistantPanelWindow->setAnchorPosition(anchor);
+    }
+
+    refreshCompanionSettings();
+}
+
+void MainWindow::refreshCompanionSettings()
+{
+    if (!m_companionStatusLabel) {
+        return;
+    }
+
+    const auto &state = m_companionManager.state();
+    m_companionStatusLabel->setText(QString("Mode: %1\nCaptions: %2 | Translation: %3\nPosition: %4, %5\nAnimation: %6")
+        .arg(QString::fromStdString(local_jarvis::companion::toString(state.currentMode)),
+             enabledText(state.captionsVisible),
+             enabledText(state.translationEnabled),
+             QString::number(state.anchorX),
+             QString::number(state.anchorY),
+             QString::fromStdString(local_jarvis::companion::toString(state.currentAnimationState))));
+}
+
+void MainWindow::setCompanionAnimation(local_jarvis::companion::AnimationState state)
+{
+    m_companionManager.setAnimationState(state);
+    applyCompanionState();
+    scheduleCompanionIdle();
+}
+
+void MainWindow::scheduleCompanionIdle()
+{
+    m_companionAnimationResetTimer.start(1400);
+}
+
+void MainWindow::showCompanion()
+{
+    m_companionManager.setCompanionVisible(true);
+    setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
+}
+
+void MainWindow::hideCompanion()
+{
+    m_companionManager.setPanelVisible(false);
+    m_companionManager.setCompanionVisible(false);
+    applyCompanionState();
+}
+
+void MainWindow::resetCompanionPosition()
+{
+    m_companionManager.resetAnchorPosition();
+    m_companionManager.setCompanionVisible(true);
+    setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
 }
 
 void MainWindow::refreshProcessedOutputs()

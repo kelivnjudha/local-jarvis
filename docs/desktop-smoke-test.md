@@ -1,6 +1,6 @@
 # Desktop Smoke Test
 
-Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the existing desktop scaffold only; it does not require real audio capture, screen capture, OCR, ASR, or downloaded models.
+Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold plus Companion Phase 1 shell only; it does not require real audio capture, screen capture, OCR, ASR, or downloaded models.
 
 ## Launch
 
@@ -9,6 +9,8 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Setup tab renders first.
 - Confirm the Settings tab renders.
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
+- Confirm the companion shell appears as a small always-on-top window.
+- Confirm the caption bubble appears near the companion when captions are enabled.
 
 ## Session Flow
 
@@ -18,6 +20,26 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Stop the session.
 - Confirm the session stops without errors.
 - Confirm raw session storage works even if the local model is unavailable.
+
+## Companion Shell
+
+- Click the companion.
+- Confirm the compact assistant panel opens.
+- Confirm the companion briefly switches to the salute animation state.
+- Change the mode in the panel.
+- Confirm the mode label and Settings status update.
+- Toggle captions off and on.
+- Confirm the caption bubble hides and reappears.
+- Toggle translation.
+- Confirm the Settings status updates.
+- Drag the companion while it is unlocked.
+- Confirm the companion moves and the position persists after restart.
+- Use Settings > Hide Companion.
+- Confirm the companion, panel, and captions hide.
+- Use Settings > Show Companion.
+- Confirm the companion returns.
+- Use Settings > Reset Companion Position.
+- Confirm the companion returns to the default anchor.
 
 ## Model Readiness States
 
@@ -34,10 +56,11 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the app exits cleanly without an access violation.
 - Reopen the app and repeat with the fallback model pull action if practical.
 - Confirm no queued UI update touches a destroyed `MainWindow`.
+- Close the app while the companion, caption bubble, and assistant panel are visible.
+- Confirm no companion worker or timer touches destroyed UI.
 
 ## Regression Boundaries
 
-- Confirm no companion UI appears.
 - Confirm no overlay UI appears.
 - Confirm no real microphone, system audio, or screen capture starts.
 - Confirm no OCR or ASR path runs.

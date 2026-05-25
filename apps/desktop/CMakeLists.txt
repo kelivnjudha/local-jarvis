@@ -8,6 +8,17 @@ qt_add_executable(local-jarvis-desktop
     src/main.cpp
     src/MainWindow.h
     src/MainWindow.cpp
+    src/companion/AssistantPanelWindow.h
+    src/companion/AssistantPanelWindow.cpp
+    src/companion/CaptionBubbleWindow.h
+    src/companion/CaptionBubbleWindow.cpp
+    src/companion/CompanionWindow.h
+    src/companion/CompanionWindow.cpp
+)
+
+target_include_directories(local-jarvis-desktop
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
 target_link_libraries(local-jarvis-desktop

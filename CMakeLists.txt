@@ -25,6 +25,8 @@ find_package(nlohmann_json CONFIG REQUIRED)
 
 set(LOCAL_JARVIS_CORE_SOURCES
     core/session/SessionManager.cpp
+    core/companion/AnimationStateMachine.cpp
+    core/companion/CompanionManager.cpp
     core/ai/OllamaClient.cpp
     core/ai/ModelManager.cpp
     core/ai/PromptBuilder.cpp
