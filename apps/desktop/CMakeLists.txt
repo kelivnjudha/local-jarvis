@@ -31,3 +31,5 @@ set_target_properties(local-jarvis-desktop PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
+
+local_jarvis_copy_whisper_runtime(local-jarvis-desktop)

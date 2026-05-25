@@ -128,6 +128,21 @@ else()
     target_compile_definitions(local_jarvis_core PRIVATE LOCAL_JARVIS_WHISPER_LINKED=0)
 endif()
 
+function(local_jarvis_copy_whisper_runtime target_name)
+    if(WIN32 AND LOCAL_JARVIS_ENABLE_WHISPER)
+        foreach(whisper_runtime_target IN ITEMS whisper ggml ggml-base ggml-cpu)
+            if(TARGET ${whisper_runtime_target})
+                add_custom_command(TARGET ${target_name} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        $<TARGET_FILE:${whisper_runtime_target}>
+                        $<TARGET_FILE_DIR:${target_name}>
+                    VERBATIM
+                )
+            endif()
+        endforeach()
+    endif()
+endfunction()
+
 if(WIN32)
     target_compile_definitions(local_jarvis_core PUBLIC LOCAL_JARVIS_PLATFORM_WINDOWS=1)
 elseif(APPLE)

@@ -8,6 +8,7 @@ target_link_libraries(local_jarvis_core_smoke_test
 )
 
 add_test(NAME local_jarvis_core_smoke_test COMMAND local_jarvis_core_smoke_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_core_smoke_test)
 
 add_executable(local_jarvis_processing_test
     ProcessingTest.cpp
@@ -19,6 +20,7 @@ target_link_libraries(local_jarvis_processing_test
 )
 
 add_test(NAME local_jarvis_processing_test COMMAND local_jarvis_processing_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_processing_test)
 
 add_executable(local_jarvis_companion_core_test
     CompanionCoreTest.cpp
@@ -30,6 +32,7 @@ target_link_libraries(local_jarvis_companion_core_test
 )
 
 add_test(NAME local_jarvis_companion_core_test COMMAND local_jarvis_companion_core_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_companion_core_test)
 
 add_executable(local_jarvis_caption_test
     CaptionTest.cpp
@@ -41,6 +44,7 @@ target_link_libraries(local_jarvis_caption_test
 )
 
 add_test(NAME local_jarvis_caption_test COMMAND local_jarvis_caption_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_caption_test)
 
 add_executable(local_jarvis_audio_test
     AudioTest.cpp
@@ -52,6 +56,7 @@ target_link_libraries(local_jarvis_audio_test
 )
 
 add_test(NAME local_jarvis_audio_test COMMAND local_jarvis_audio_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_audio_test)
 
 add_executable(local_jarvis_asr_test
     AsrTest.cpp
@@ -63,3 +68,4 @@ target_link_libraries(local_jarvis_asr_test
 )
 
 add_test(NAME local_jarvis_asr_test COMMAND local_jarvis_asr_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_asr_test)
