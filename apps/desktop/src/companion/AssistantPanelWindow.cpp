@@ -6,9 +6,11 @@
 
 AssistantPanelWindow::AssistantPanelWindow(
     local_jarvis::companion::CompanionManager &companionManager,
+    local_jarvis::caption::CaptionManager &captionManager,
     QWidget *parent)
     : QWidget(parent)
     , m_companionManager(companionManager)
+    , m_captionManager(captionManager)
 {
     setWindowTitle("Local Jarvis Assistant Panel");
     setAccessibleName("Local Jarvis Assistant Panel");
@@ -21,15 +23,21 @@ AssistantPanelWindow::AssistantPanelWindow(
 void AssistantPanelWindow::applyState()
 {
     const auto &state = m_companionManager.state();
+    const auto &captionState = m_captionManager.state();
     const auto profile = m_companionManager.visualProfile();
     const QSignalBlocker modeBlocker(m_modeCombo);
+    const QSignalBlocker captionModeBlocker(m_captionModeCombo);
     const QSignalBlocker captionsBlocker(m_captionsCheck);
+    const QSignalBlocker showSpeakerBlocker(m_showSpeakerCheck);
     const QSignalBlocker translationBlocker(m_translationCheck);
     const QSignalBlocker microphoneBlocker(m_microphoneCheck);
     m_modeCombo->setCurrentIndex(static_cast<int>(state.currentMode));
-    m_captionsCheck->setChecked(state.captionsVisible);
+    m_captionModeCombo->setCurrentIndex(captionModeIndex(captionState.captionMode));
+    m_captionsCheck->setChecked(state.captionsVisible && captionState.captionsEnabled);
+    m_showSpeakerCheck->setChecked(captionState.showSpeaker);
     m_translationCheck->setChecked(state.translationEnabled);
     m_microphoneCheck->setChecked(state.microphoneEnabled);
+    m_languageLabel->setText(QString("Source: Auto | Target: English"));
     m_statusLabel->setText(QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4")
         .arg(QString::fromStdString(profile.displayName),
              QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)),
@@ -82,18 +90,33 @@ void AssistantPanelWindow::buildUi()
     rootLayout->addWidget(m_statusLabel);
 
     m_modeCombo = new QComboBox(this);
+    m_modeCombo->setAccessibleName("Companion mode");
     m_modeCombo->addItem("Study");
     m_modeCombo->addItem("Meeting");
     m_modeCombo->addItem("Interview Practice");
     m_modeCombo->addItem("Review");
     rootLayout->addWidget(m_modeCombo);
 
+    m_captionModeCombo = new QComboBox(this);
+    m_captionModeCombo->setAccessibleName("Caption mode");
+    m_captionModeCombo->addItem("Off");
+    m_captionModeCombo->addItem("Original only");
+    m_captionModeCombo->addItem("English only");
+    m_captionModeCombo->addItem("Original + English");
+    m_captionModeCombo->addItem("Summary");
+    rootLayout->addWidget(m_captionModeCombo);
+
     m_captionsCheck = new QCheckBox("Captions", this);
+    m_showSpeakerCheck = new QCheckBox("Show speaker", this);
     m_translationCheck = new QCheckBox("Translation", this);
     m_microphoneCheck = new QCheckBox("Microphone placeholder", this);
     rootLayout->addWidget(m_captionsCheck);
+    rootLayout->addWidget(m_showSpeakerCheck);
     rootLayout->addWidget(m_translationCheck);
     rootLayout->addWidget(m_microphoneCheck);
+
+    m_languageLabel = new QLabel("Source: Auto | Target: English", this);
+    rootLayout->addWidget(m_languageLabel);
 
     auto *buttonLayout = new QHBoxLayout();
     m_pauseButton = new QPushButton("Pause", this);
@@ -120,7 +143,30 @@ void AssistantPanelWindow::connectSignals()
 
     connect(m_captionsCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_companionManager.setCaptionsVisible(checked);
+        m_captionManager.setCaptionsEnabled(checked);
+        if (checked && m_captionManager.state().captionMode == local_jarvis::caption::CaptionMode::Off) {
+            m_captionManager.setCaptionMode(local_jarvis::caption::CaptionMode::OriginalAndTranslation);
+        }
         emitPanelAction();
+        if (m_changedCallback) {
+            m_changedCallback();
+        }
+    });
+
+    connect(m_captionModeCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        const auto mode = selectedCaptionMode();
+        m_captionManager.setCaptionMode(mode);
+        const bool enabled = mode != local_jarvis::caption::CaptionMode::Off;
+        m_captionManager.setCaptionsEnabled(enabled);
+        m_companionManager.setCaptionsVisible(enabled);
+        emitPanelAction();
+        if (m_changedCallback) {
+            m_changedCallback();
+        }
+    });
+
+    connect(m_showSpeakerCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setShowSpeaker(checked);
         if (m_changedCallback) {
             m_changedCallback();
         }
@@ -199,4 +245,39 @@ local_jarvis::companion::CompanionMode AssistantPanelWindow::selectedMode() cons
     default:
         return CompanionMode::Study;
     }
+}
+
+local_jarvis::caption::CaptionMode AssistantPanelWindow::selectedCaptionMode() const
+{
+    using local_jarvis::caption::CaptionMode;
+    switch (m_captionModeCombo->currentIndex()) {
+    case 0:
+        return CaptionMode::Off;
+    case 1:
+        return CaptionMode::OriginalOnly;
+    case 2:
+        return CaptionMode::TranslationOnly;
+    case 4:
+        return CaptionMode::CleanSummary;
+    default:
+        return CaptionMode::OriginalAndTranslation;
+    }
+}
+
+int AssistantPanelWindow::captionModeIndex(local_jarvis::caption::CaptionMode mode) const
+{
+    using local_jarvis::caption::CaptionMode;
+    switch (mode) {
+    case CaptionMode::Off:
+        return 0;
+    case CaptionMode::OriginalOnly:
+        return 1;
+    case CaptionMode::TranslationOnly:
+        return 2;
+    case CaptionMode::OriginalAndTranslation:
+        return 3;
+    case CaptionMode::CleanSummary:
+        return 4;
+    }
+    return 3;
 }

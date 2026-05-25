@@ -34,6 +34,20 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the animation state label changes after companion click, panel action, microphone placeholder toggle, or caption update.
 - Toggle captions off and on.
 - Confirm the caption bubble hides and reappears.
+- Change caption mode to Off.
+- Confirm the caption bubble hides or clears text.
+- Change caption mode to Original only.
+- Confirm original text is shown with the speaker label when enabled.
+- Change caption mode to English only.
+- Confirm translated English text is shown.
+- Change caption mode to Original + English.
+- Confirm original and translated lines are shown together.
+- Change caption mode to Summary.
+- Confirm summary text is shown.
+- Toggle speaker labels.
+- Confirm speaker labels hide and reappear.
+- Adjust caption max lines and max characters in Settings.
+- Confirm caption output respects the limits and settings persist after restart.
 - Toggle translation.
 - Confirm the Settings status updates.
 - Adjust the companion scale slider.

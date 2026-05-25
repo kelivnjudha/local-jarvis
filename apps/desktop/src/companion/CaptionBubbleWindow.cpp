@@ -1,32 +1,50 @@
 #include "companion/CaptionBubbleWindow.h"
 
 #include <QPainter>
-#include <QTextOption>
 #include <QtGlobal>
 
 CaptionBubbleWindow::CaptionBubbleWindow(
     local_jarvis::companion::CompanionManager &companionManager,
+    local_jarvis::caption::CaptionManager &captionManager,
+    local_jarvis::caption::DummyCaptionSource &dummyCaptionSource,
     QWidget *parent)
     : QWidget(parent)
     , m_companionManager(companionManager)
+    , m_captionManager(captionManager)
+    , m_dummyCaptionSource(dummyCaptionSource)
 {
     setWindowTitle("Local Jarvis Captions");
     setAccessibleName("Local Jarvis Caption Bubble");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground);
 
+    m_captionLabel = new QLabel(this);
+    m_captionLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
+    m_captionLabel->setWordWrap(true);
+    m_captionLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
     connect(&m_captionTimer, &QTimer::timeout, this, [this]() {
         updateDummyCaption();
     });
     m_captionTimer.start(3200);
+    updateDummyCaption();
 }
 
 void CaptionBubbleWindow::applyState()
 {
     const auto &state = m_companionManager.state();
-    resize(state.captionWidth, qMax(80, state.captionFontSize * (state.captionMaxLines + 2)));
+    const auto &captionState = m_captionManager.state();
+    refreshCaptionText();
+    resize(state.captionWidth, qMax(80, state.captionFontSize * (captionState.maxLines + 2)));
+    if (m_captionLabel) {
+        m_captionLabel->setGeometry(rect().adjusted(20, 18, -20, -14));
+    }
+    updateCaptionLabelStyle();
     setWindowOpacity(state.captionOpacity);
-    applyWindowFlags(state.companionVisible && state.captionsVisible);
+    applyWindowFlags(state.companionVisible
+        && state.captionsVisible
+        && captionState.captionsEnabled
+        && !m_captionText.trimmed().isEmpty());
     update();
 }
 
@@ -40,6 +58,16 @@ void CaptionBubbleWindow::setAnchorPosition(const QPoint &companionTopLeft)
 void CaptionBubbleWindow::setCaptionUpdatedCallback(std::function<void()> callback)
 {
     m_captionUpdatedCallback = std::move(callback);
+}
+
+void CaptionBubbleWindow::refreshCaptionText()
+{
+    m_captionText = QString::fromStdString(m_captionManager.currentDisplayText());
+    if (m_captionLabel) {
+        m_captionLabel->setText(m_captionText);
+    }
+    setAccessibleDescription(m_captionText);
+    setToolTip(m_captionText);
 }
 
 void CaptionBubbleWindow::paintEvent(QPaintEvent *)
@@ -83,28 +111,13 @@ void CaptionBubbleWindow::paintEvent(QPaintEvent *)
     painter.setBrush(QColor(border.red(), border.green(), border.blue(), 70));
     painter.drawRoundedRect(QRect(12, 10, 92, 18), 8, 8);
 
-    painter.setPen(foreground);
-    QFont font = painter.font();
-    font.setPointSize(m_companionManager.state().captionFontSize);
-    font.setBold(true);
-    painter.setFont(font);
-
-    QTextOption option;
-    option.setWrapMode(QTextOption::WordWrap);
-    option.setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    painter.drawText(rect().adjusted(20, 18, -20, -14), m_captionText, option);
+    Q_UNUSED(foreground);
 }
 
 void CaptionBubbleWindow::updateDummyCaption()
 {
-    const std::vector<QString> captions {
-        "Listening ready...",
-        "Taking notes locally...",
-        currentModeCaption(),
-        QString::fromUtf8("Translation: Auto \xE2\x86\x92 English")
-    };
-
-    m_captionText = captions[static_cast<std::size_t>(m_captionIndex) % captions.size()];
+    m_captionManager.addSegment(m_dummyCaptionSource.nextSegment());
+    refreshCaptionText();
     ++m_captionIndex;
     update();
 
@@ -125,23 +138,30 @@ void CaptionBubbleWindow::applyWindowFlags(bool visible)
     setVisible(visible);
 }
 
+void CaptionBubbleWindow::updateCaptionLabelStyle()
+{
+    if (!m_captionLabel) {
+        return;
+    }
+
+    const auto profile = m_companionManager.visualProfile();
+    QColor foreground(238, 242, 248);
+    if (profile.captionBubbleStyle == "note-card") {
+        foreground = QColor(34, 45, 40);
+    } else if (profile.captionBubbleStyle == "meeting-caption") {
+        foreground = QColor(30, 42, 62);
+    } else if (profile.captionBubbleStyle == "coaching-prompt") {
+        foreground = QColor(54, 39, 25);
+    } else if (profile.captionBubbleStyle == "reading-review") {
+        foreground = QColor(39, 34, 54);
+    }
+
+    m_captionLabel->setStyleSheet(QString("background: transparent; color: %1; font-size: %2pt; font-weight: 700;")
+        .arg(foreground.name(QColor::HexRgb),
+             QString::number(m_companionManager.state().captionFontSize)));
+}
+
 QColor CaptionBubbleWindow::toQColor(const local_jarvis::companion::CompanionColor &color) const
 {
     return QColor(color.red, color.green, color.blue);
-}
-
-QString CaptionBubbleWindow::currentModeCaption() const
-{
-    using local_jarvis::companion::CompanionMode;
-    switch (m_companionManager.state().currentMode) {
-    case CompanionMode::Study:
-        return "Study mode active.";
-    case CompanionMode::Meeting:
-        return "Meeting mode active.";
-    case CompanionMode::InterviewPractice:
-        return "Interview practice active.";
-    case CompanionMode::Review:
-        return "Review mode active.";
-    }
-    return "Study mode active.";
 }

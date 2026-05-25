@@ -36,6 +36,52 @@ QString pathText(const std::filesystem::path &path)
 #endif
 }
 
+int captionModeIndex(local_jarvis::caption::CaptionMode mode)
+{
+    using local_jarvis::caption::CaptionMode;
+    switch (mode) {
+    case CaptionMode::Off:
+        return 0;
+    case CaptionMode::OriginalOnly:
+        return 1;
+    case CaptionMode::TranslationOnly:
+        return 2;
+    case CaptionMode::OriginalAndTranslation:
+        return 3;
+    case CaptionMode::CleanSummary:
+        return 4;
+    }
+    return 3;
+}
+
+local_jarvis::caption::CaptionMode captionModeFromIndex(int index)
+{
+    using local_jarvis::caption::CaptionMode;
+    switch (index) {
+    case 0:
+        return CaptionMode::Off;
+    case 1:
+        return CaptionMode::OriginalOnly;
+    case 2:
+        return CaptionMode::TranslationOnly;
+    case 4:
+        return CaptionMode::CleanSummary;
+    default:
+        return CaptionMode::OriginalAndTranslation;
+    }
+}
+
+QString languageDisplay(const std::string &language)
+{
+    if (language == "auto") {
+        return "Auto";
+    }
+    if (language == "en") {
+        return "English";
+    }
+    return QString::fromStdString(language);
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -44,6 +90,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_asrEngine(local_jarvis::asr::createDefaultAsrEngine())
     , m_modelManager(m_ollamaClient, m_systemCheck)
     , m_companionManager(m_storage)
+    , m_captionManager(m_storage)
     , m_setupManager(m_storage, m_modelManager, m_ollamaClient)
     , m_processingQueue(m_storage, m_ollamaClient)
 {
@@ -257,6 +304,50 @@ void MainWindow::buildUi()
     companionLayout->addWidget(m_resetCompanionVisualButton);
     settingsLayout->addWidget(companionGroup);
 
+    auto *captionGroup = new QGroupBox("Captions", settingsPage);
+    auto *captionLayout = new QVBoxLayout(captionGroup);
+    m_captionModeCombo = new QComboBox(captionGroup);
+    m_captionModeCombo->setAccessibleName("Caption mode");
+    m_captionModeCombo->addItem("Off");
+    m_captionModeCombo->addItem("Original only");
+    m_captionModeCombo->addItem("English only");
+    m_captionModeCombo->addItem("Original + English");
+    m_captionModeCombo->addItem("Summary");
+    captionLayout->addWidget(m_captionModeCombo);
+
+    m_captionShowSpeakerCheckBox = new QCheckBox("Show speaker labels", captionGroup);
+    m_captionShowSpeakerCheckBox->setAccessibleName("Show speaker labels");
+    captionLayout->addWidget(m_captionShowSpeakerCheckBox);
+
+    auto *captionLimitLayout = new QHBoxLayout();
+    m_captionMaxLinesSpinBox = new QSpinBox(captionGroup);
+    m_captionMaxLinesSpinBox->setAccessibleName("Caption max lines");
+    m_captionMaxLinesSpinBox->setRange(1, 8);
+    m_captionMaxLinesSpinBox->setPrefix("Max lines: ");
+    m_captionMaxCharactersSpinBox = new QSpinBox(captionGroup);
+    m_captionMaxCharactersSpinBox->setAccessibleName("Caption max characters");
+    m_captionMaxCharactersSpinBox->setRange(40, 1000);
+    m_captionMaxCharactersSpinBox->setSingleStep(20);
+    m_captionMaxCharactersSpinBox->setPrefix("Max chars: ");
+    captionLimitLayout->addWidget(m_captionMaxLinesSpinBox);
+    captionLimitLayout->addWidget(m_captionMaxCharactersSpinBox);
+    captionLimitLayout->addStretch();
+    captionLayout->addLayout(captionLimitLayout);
+
+    auto *captionLanguageLayout = new QHBoxLayout();
+    m_captionSourceLanguageEdit = new QLineEdit(captionGroup);
+    m_captionSourceLanguageEdit->setAccessibleName("Caption source language");
+    m_captionSourceLanguageEdit->setPlaceholderText("auto");
+    m_captionTargetLanguageEdit = new QLineEdit(captionGroup);
+    m_captionTargetLanguageEdit->setAccessibleName("Caption target language");
+    m_captionTargetLanguageEdit->setPlaceholderText("en");
+    captionLanguageLayout->addWidget(new QLabel("Source", captionGroup));
+    captionLanguageLayout->addWidget(m_captionSourceLanguageEdit);
+    captionLanguageLayout->addWidget(new QLabel("Target", captionGroup));
+    captionLanguageLayout->addWidget(m_captionTargetLanguageEdit);
+    captionLayout->addLayout(captionLanguageLayout);
+    settingsLayout->addWidget(captionGroup);
+
     settingsLayout->addStretch();
 
     m_tabs->addTab(settingsPage, "Settings");
@@ -405,6 +496,41 @@ void MainWindow::connectSignals()
     connect(m_resetCompanionVisualButton, &QPushButton::clicked, this, [this]() {
         resetCompanionVisuals();
     });
+
+    connect(m_captionModeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        const auto mode = captionModeFromIndex(index);
+        m_captionManager.setCaptionMode(mode);
+        const bool enabled = mode != local_jarvis::caption::CaptionMode::Off;
+        m_captionManager.setCaptionsEnabled(enabled);
+        m_companionManager.setCaptionsVisible(enabled);
+        applyCompanionState();
+    });
+
+    connect(m_captionShowSpeakerCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setShowSpeaker(checked);
+        applyCompanionState();
+    });
+
+    connect(m_captionMaxLinesSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+        m_captionManager.setMaxLines(value);
+        m_companionManager.setCaptionMaxLines(value);
+        applyCompanionState();
+    });
+
+    connect(m_captionMaxCharactersSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+        m_captionManager.setMaxCharacters(value);
+        applyCompanionState();
+    });
+
+    connect(m_captionSourceLanguageEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_captionManager.setSourceLanguage(m_captionSourceLanguageEdit->text().trimmed().toStdString());
+        applyCompanionState();
+    });
+
+    connect(m_captionTargetLanguageEdit, &QLineEdit::editingFinished, this, [this]() {
+        m_captionManager.setTargetLanguage(m_captionTargetLanguageEdit->text().trimmed().toStdString());
+        applyCompanionState();
+    });
 }
 
 void MainWindow::initializeStorage()
@@ -532,9 +658,13 @@ void MainWindow::initializeCompanion()
     }
 
     m_companionManager.loadSettings();
+    m_captionManager.loadSettings();
+    m_companionManager.setCaptionsVisible(m_captionManager.state().captionsEnabled
+        && m_captionManager.state().captionMode != local_jarvis::caption::CaptionMode::Off);
+    m_companionManager.setCaptionMaxLines(m_captionManager.state().maxLines);
     m_companionWindow = std::make_unique<CompanionWindow>(m_companionManager);
-    m_captionBubbleWindow = std::make_unique<CaptionBubbleWindow>(m_companionManager);
-    m_assistantPanelWindow = std::make_unique<AssistantPanelWindow>(m_companionManager);
+    m_captionBubbleWindow = std::make_unique<CaptionBubbleWindow>(m_companionManager, m_captionManager, m_dummyCaptionSource);
+    m_assistantPanelWindow = std::make_unique<AssistantPanelWindow>(m_companionManager, m_captionManager);
 
     connect(&m_companionAnimationResetTimer, &QTimer::timeout, this, [this]() {
         m_companionManager.animationStateMachine().onTimeout();
@@ -599,6 +729,7 @@ void MainWindow::applyCompanionState()
         m_companionWindow->applyState();
     }
     if (m_captionBubbleWindow) {
+        m_captionBubbleWindow->refreshCaptionText();
         m_captionBubbleWindow->applyState();
         m_captionBubbleWindow->setAnchorPosition(anchor);
     }
@@ -608,6 +739,7 @@ void MainWindow::applyCompanionState()
     }
 
     refreshCompanionSettings();
+    refreshCaptionSettings();
 }
 
 void MainWindow::refreshCompanionSettings()
@@ -617,15 +749,17 @@ void MainWindow::refreshCompanionSettings()
     }
 
     const auto &state = m_companionManager.state();
+    const auto &captionState = m_captionManager.state();
     const auto profile = m_companionManager.visualProfile();
     m_companionStatusLabel->setText(QString(
         "Mode: %1\n"
-        "Captions: %2 | Translation: %3\n"
-        "Position: %4, %5 | Scale: %6%\n"
-        "Theme: %7 | Outfit: %8 | Accessory: %9\n"
-        "Animation: %10 | Motion: %11 | Always on top: %12")
+        "Captions: %2 (%3) | Translation: %4\n"
+        "Position: %5, %6 | Scale: %7%\n"
+        "Theme: %8 | Outfit: %9 | Accessory: %10\n"
+        "Animation: %11 | Motion: %12 | Always on top: %13")
         .arg(QString::fromStdString(profile.displayName),
-             enabledText(state.captionsVisible),
+             enabledText(captionState.captionsEnabled && state.captionsVisible),
+             QString::fromStdString(local_jarvis::caption::displayName(captionState.captionMode)),
              enabledText(state.translationEnabled),
              QString::number(state.anchorX),
              QString::number(state.anchorY),
@@ -647,6 +781,28 @@ void MainWindow::refreshCompanionSettings()
     m_companionAnimationCheckBox->setChecked(state.animationEnabled);
     m_companionIdleMotionCheckBox->setChecked(state.idleMotionEnabled);
     m_companionAlwaysOnTopCheckBox->setChecked(state.alwaysOnTop);
+}
+
+void MainWindow::refreshCaptionSettings()
+{
+    if (!m_captionModeCombo) {
+        return;
+    }
+
+    const auto &state = m_captionManager.state();
+    const QSignalBlocker modeBlocker(m_captionModeCombo);
+    const QSignalBlocker speakerBlocker(m_captionShowSpeakerCheckBox);
+    const QSignalBlocker linesBlocker(m_captionMaxLinesSpinBox);
+    const QSignalBlocker charactersBlocker(m_captionMaxCharactersSpinBox);
+    const QSignalBlocker sourceBlocker(m_captionSourceLanguageEdit);
+    const QSignalBlocker targetBlocker(m_captionTargetLanguageEdit);
+
+    m_captionModeCombo->setCurrentIndex(captionModeIndex(state.captionMode));
+    m_captionShowSpeakerCheckBox->setChecked(state.showSpeaker);
+    m_captionMaxLinesSpinBox->setValue(state.maxLines);
+    m_captionMaxCharactersSpinBox->setValue(state.maxCharacters);
+    m_captionSourceLanguageEdit->setText(QString::fromStdString(state.sourceLanguage));
+    m_captionTargetLanguageEdit->setText(QString::fromStdString(state.targetLanguage));
 }
 
 void MainWindow::setCompanionAnimation(local_jarvis::companion::AnimationState state)

@@ -2,11 +2,13 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPushButton>
 #include <QSlider>
+#include <QSpinBox>
 #include <QTabWidget>
 #include <QTextEdit>
 #include <QTimer>
@@ -23,6 +25,8 @@
 #include "ai/OllamaClient.h"
 #include "asr/AsrEngine.h"
 #include "audio/DummyAudioCapture.h"
+#include "caption/CaptionManager.h"
+#include "caption/DummyCaptionSource.h"
 #include "companion/CompanionManager.h"
 #include "privacy/PrivacyManager.h"
 #include "processing/ProcessingQueue.h"
@@ -52,6 +56,7 @@ private:
     void initializeCompanion();
     void applyCompanionState();
     void refreshCompanionSettings();
+    void refreshCaptionSettings();
     void setCompanionAnimation(local_jarvis::companion::AnimationState state);
     void scheduleCompanionIdle();
     void showCompanion();
@@ -108,6 +113,12 @@ private:
     QCheckBox *m_companionIdleMotionCheckBox = nullptr;
     QCheckBox *m_companionAlwaysOnTopCheckBox = nullptr;
     QPushButton *m_resetCompanionVisualButton = nullptr;
+    QComboBox *m_captionModeCombo = nullptr;
+    QCheckBox *m_captionShowSpeakerCheckBox = nullptr;
+    QSpinBox *m_captionMaxLinesSpinBox = nullptr;
+    QSpinBox *m_captionMaxCharactersSpinBox = nullptr;
+    QLineEdit *m_captionSourceLanguageEdit = nullptr;
+    QLineEdit *m_captionTargetLanguageEdit = nullptr;
 
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
@@ -117,6 +128,8 @@ private:
     local_jarvis::ai::ModelManager m_modelManager;
     local_jarvis::storage::Storage m_storage;
     local_jarvis::companion::CompanionManager m_companionManager;
+    local_jarvis::caption::CaptionManager m_captionManager;
+    local_jarvis::caption::DummyCaptionSource m_dummyCaptionSource;
     local_jarvis::setup::SetupManager m_setupManager;
     local_jarvis::setup::SetupStatus m_setupStatus;
     local_jarvis::processing::ProcessingQueue m_processingQueue;
