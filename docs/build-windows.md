@@ -10,6 +10,46 @@ out/build/<preset-name>
 
 The `out/` directory is ignored by Git and should not be committed.
 
+## Developer Scripts
+
+Use the scripts from the repository root in PowerShell.
+
+Bootstrap a developer machine and run the Debug core build/test path:
+
+```powershell
+.\scripts\bootstrap-windows.ps1
+```
+
+The bootstrap script checks Git, CMake, MSVC, vcpkg, and Qt discovery. If `VCPKG_ROOT` is missing, it suggests `C:\dev\vcpkg`. If vcpkg is not present there, it asks before cloning `https://github.com/microsoft/vcpkg.git`. It always sets `VCPKG_DISABLE_METRICS=1` for the current process.
+
+Run repeatable verification after the machine is already set up:
+
+```powershell
+.\scripts\verify-windows.ps1
+```
+
+The verify script runs both core presets and their tests. If Qt is discoverable, it also runs the desktop Debug configure/build.
+
+Prepare the local development AI model:
+
+```powershell
+.\scripts\setup-ollama-model.ps1
+```
+
+By default this checks/pulls `gemma4:e4b`. For the smaller fallback model:
+
+```powershell
+.\scripts\setup-ollama-model.ps1 -Fallback
+```
+
+The Ollama script checks that Ollama is installed, verifies `http://localhost:11434`, lists installed models, asks before pulling, and runs the `LOCAL_JARVIS_READY` health check prompt.
+
+## Developer vs End-User Setup
+
+This document is for developers building Local Jarvis from source. CMake, vcpkg, Visual Studio Build Tools, and the Qt SDK are developer dependencies.
+
+They are not intended to be end-user runtime requirements. A future Windows installer should ship the built application and required runtime DLLs so end users do not install CMake, vcpkg, Visual Studio Build Tools, or the Qt SDK. See [packaging-windows.md](packaging-windows.md).
+
 ## Prerequisites
 
 - Windows 10 or newer.
