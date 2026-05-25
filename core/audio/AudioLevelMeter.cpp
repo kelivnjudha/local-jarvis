@@ -65,6 +65,39 @@ double AudioLevelMeter::calculateRms(std::span<const float> samples)
     return std::clamp(std::sqrt(sumSquares / static_cast<double>(samples.size())), 0.0, 1.0);
 }
 
+double AudioLevelMeter::calculatePeak(std::span<const float> samples)
+{
+    double peak = 0.0;
+    for (float sample : samples) {
+        peak = std::max(peak, std::abs(std::clamp(static_cast<double>(sample), -1.0, 1.0)));
+    }
+    return std::clamp(peak, 0.0, 1.0);
+}
+
+double AudioLevelMeter::amplitudeToDbfs(double amplitude)
+{
+    const double clamped = std::clamp(std::abs(amplitude), 0.0, 1.0);
+    if (clamped <= 0.000001) {
+        return -120.0;
+    }
+    return std::max(-120.0, 20.0 * std::log10(clamped));
+}
+
+double AudioLevelMeter::nonZeroSampleRatio(std::span<const float> samples)
+{
+    if (samples.empty()) {
+        return 0.0;
+    }
+
+    std::size_t nonZero = 0;
+    for (float sample : samples) {
+        if (std::abs(sample) > 0.000001F) {
+            ++nonZero;
+        }
+    }
+    return static_cast<double>(nonZero) / static_cast<double>(samples.size());
+}
+
 std::vector<float> AudioLevelMeter::mixInterleavedToMono(std::span<const float> samples, int channelCount)
 {
     if (samples.empty()) {

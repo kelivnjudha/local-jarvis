@@ -151,9 +151,24 @@ int main()
             return workerSegmentObserved;
         });
     }
+    const auto workerStatsBeforeStop = worker.stats();
     worker.stop();
     if (!expect(workerSegmentObserved && workerSegment.text == "Stub transcript chunk 7",
             "AsrWorker should process chunks with the stub engine off the caller thread.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(workerStatsBeforeStop.lastChunkId == 7
+            && workerStatsBeforeStop.lastChunkDurationMs == 1000
+            && workerStatsBeforeStop.lastChunkSampleRate == 16000
+            && workerStatsBeforeStop.lastWhisperSampleCount == 1000,
+            "AsrWorker should expose last chunk timing and Whisper-prepared sample count.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(workerStatsBeforeStop.lastChunkRms > 0.19
+            && workerStatsBeforeStop.lastChunkPeak > 0.19
+            && !workerStatsBeforeStop.lastChunkTreatedAsSilent
+            && workerStatsBeforeStop.lastTranscriptText == "Stub transcript chunk 7",
+            "AsrWorker should expose RMS, peak, silence, and last text diagnostics.")) {
         return EXIT_FAILURE;
     }
 

@@ -18,6 +18,7 @@
 #include <QWidget>
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -27,6 +28,19 @@ namespace {
 QString enabledText(bool enabled)
 {
     return enabled ? "Enabled" : "Disabled";
+}
+
+QString dbfsText(double dbfs)
+{
+    if (!std::isfinite(dbfs) || dbfs <= -119.9) {
+        return "-inf dBFS";
+    }
+    return QString("%1 dBFS").arg(QString::number(dbfs, 'f', 1));
+}
+
+QString percentText(double ratio)
+{
+    return QString("%1%").arg(QString::number(std::clamp(ratio, 0.0, 1.0) * 100.0, 'f', 1));
 }
 
 QString pathText(const std::filesystem::path &path)
@@ -904,7 +918,12 @@ void MainWindow::refreshMicrophoneRuntimeUi()
     const bool microphoneActive = diagnostics.captureActive;
     const int level = static_cast<int>(std::clamp(diagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
     m_microphoneLevelBar->setValue(level);
-    m_microphoneLevelBar->setFormat(microphoneActive ? QString("Mic level: %1%").arg(level) : "Mic level: OFF");
+    m_microphoneLevelBar->setFormat(microphoneActive
+            ? QString("Mic level: %1% | RMS %2 | Peak %3")
+                .arg(QString::number(diagnostics.smoothedLevel * 100.0, 'f', 2),
+                     dbfsText(diagnostics.lastBufferDbfs),
+                     QString::number(diagnostics.lastBufferPeak, 'f', 4))
+            : "Mic level: OFF");
 
     if (m_microphoneDiagnosticsLabel) {
         m_microphoneDiagnosticsLabel->setText(microphoneDiagnosticsText());
@@ -1495,8 +1514,9 @@ QString MainWindow::microphoneDiagnosticsText() const
         "Device id: %2\n"
         "Capture active: %3 | Sample rate: %4 Hz | Channels: %5 | Format: %6\n"
         "Buffers: %7 | Frames: %8 | Non-zero samples: %9\n"
-        "Last buffer RMS: %10 | Smoothed level: %11 | Last callback: %12\n"
-        "Last error: %13")
+        "Last buffer RMS: %10 (%11) | Peak: %12 | Non-zero: %13\n"
+        "Smoothed level: %14 | Last callback: %15\n"
+        "Last error: %16")
         .arg(deviceName,
              deviceId.isEmpty() ? QString("none") : deviceId,
              diagnostics.captureActive ? "yes" : "no",
@@ -1507,6 +1527,9 @@ QString MainWindow::microphoneDiagnosticsText() const
              QString::number(diagnostics.framesReceived),
              QString::number(diagnostics.nonZeroSamplesObserved),
              QString::number(diagnostics.lastBufferRms, 'f', 4),
+             dbfsText(diagnostics.lastBufferDbfs),
+             QString::number(diagnostics.lastBufferPeak, 'f', 4),
+             percentText(diagnostics.lastBufferNonZeroRatio),
              QString::number(diagnostics.smoothedLevel, 'f', 4),
              lastCallback,
              error);
@@ -1630,18 +1653,20 @@ void MainWindow::refreshStatus()
     const QString systemAudioRuntime = m_sessionManager && m_sessionManager->isSystemAudioCaptureActive()
         ? "running"
         : "stopped";
-    const int microphoneLevel = static_cast<int>(std::clamp(microphoneDiagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
+    const double microphoneLevel = std::clamp(microphoneDiagnostics.smoothedLevel, 0.0, 1.0) * 100.0;
     const QString modeText = isRealMicrophoneMode() ? "Real microphone" : "Dummy audio";
     const QString deviceText = m_microphoneDeviceCombo && m_microphoneDeviceCombo->isEnabled()
         ? m_microphoneDeviceCombo->currentText()
         : "unavailable";
 
-    m_captureStatusLabel->setText(QString("Audio mode: %1 | Device: %2\nMicrophone permission: %3 (%4, level %5%) | System audio permission: %6 (%7) | Screen: %8")
+    m_captureStatusLabel->setText(QString("Audio mode: %1 | Device: %2\nMicrophone permission: %3 (%4, level %5%, RMS %6, peak %7) | System audio permission: %8 (%9) | Screen: %10")
         .arg(modeText,
              deviceText,
              enabledText(status.microphoneEnabled),
              microphoneRuntime,
-             QString::number(microphoneLevel),
+             QString::number(microphoneLevel, 'f', 2),
+             dbfsText(microphoneDiagnostics.lastBufferDbfs),
+             QString::number(microphoneDiagnostics.lastBufferPeak, 'f', 4),
              enabledText(status.systemAudioEnabled),
              systemAudioRuntime,
              enabledText(status.screenCaptureEnabled)));
@@ -1697,10 +1722,26 @@ void MainWindow::refreshStatus()
         m_whisperStatusLabel->setText(whisperStatusText());
     }
     if (m_asrStatsLabel) {
-        m_asrStatsLabel->setText(QString("Chunks queued: %1 | processed: %2 | pending: %3")
+        m_asrStatsLabel->setText(QString(
+            "Chunks queued: %1 | processed: %2 | pending: %3\n"
+            "Last chunk: id %4 | %5 ms | input %6 Hz/%7 ch/%8 samples | Whisper samples: %9\n"
+            "Last chunk RMS: %10 (%11) | peak: %12 | non-zero: %13 | silent: %14\n"
+            "Last ASR text/result: %15")
             .arg(QString::number(asrStats.chunksQueued),
                  QString::number(asrStats.chunksProcessed),
-                 QString::number(asrStats.pendingChunks)));
+                 QString::number(asrStats.pendingChunks),
+                 QString::number(asrStats.lastChunkId),
+                 QString::number(asrStats.lastChunkDurationMs),
+                 QString::number(asrStats.lastChunkSampleRate),
+                 QString::number(asrStats.lastChunkChannels),
+                 QString::number(asrStats.lastChunkInputSamples),
+                 QString::number(asrStats.lastWhisperSampleCount),
+                 QString::number(asrStats.lastChunkRms, 'f', 4),
+                 dbfsText(asrStats.lastChunkDbfs),
+                 QString::number(asrStats.lastChunkPeak, 'f', 4),
+                 percentText(asrStats.lastChunkNonZeroRatio),
+                 asrStats.lastChunkTreatedAsSilent ? "yes" : "no",
+                 asrStats.lastTranscriptText.empty() ? "none" : QString::fromStdString(asrStats.lastTranscriptText)));
     }
     if (m_asrErrorLabel) {
         m_asrErrorLabel->setText(QString("Last ASR error: %1")

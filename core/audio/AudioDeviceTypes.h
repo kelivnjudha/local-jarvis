@@ -25,6 +25,9 @@ struct MicrophoneDiagnostics {
     std::uint64_t framesReceived = 0;
     std::uint64_t nonZeroSamplesObserved = 0;
     double lastBufferRms = 0.0;
+    double lastBufferPeak = 0.0;
+    double lastBufferDbfs = -120.0;
+    double lastBufferNonZeroRatio = 0.0;
     double smoothedLevel = 0.0;
     std::int64_t lastCallbackTimeMs = 0;
     std::string lastError;

@@ -718,6 +718,9 @@ void WindowsMicrophoneCapture::captureLoop()
 
             monoSamples = AudioLevelMeter::mixInterleavedToMono(samples, static_cast<int>(mixFormat->nChannels));
             const double bufferRms = AudioLevelMeter::calculateRms(monoSamples);
+            const double bufferPeak = AudioLevelMeter::calculatePeak(monoSamples);
+            const double bufferDbfs = AudioLevelMeter::amplitudeToDbfs(bufferRms);
+            const double nonZeroRatio = AudioLevelMeter::nonZeroSampleRatio(monoSamples);
             const std::uint64_t nonZeroSamples = countNonZeroSamples(monoSamples);
             PcmAudioCallback pcmCallback;
             std::int64_t startMs = 0;
@@ -735,6 +738,9 @@ void WindowsMicrophoneCapture::captureLoop()
                 m_diagnostics.framesReceived += frameCount;
                 m_diagnostics.nonZeroSamplesObserved += nonZeroSamples;
                 m_diagnostics.lastBufferRms = bufferRms;
+                m_diagnostics.lastBufferPeak = bufferPeak;
+                m_diagnostics.lastBufferDbfs = bufferDbfs;
+                m_diagnostics.lastBufferNonZeroRatio = nonZeroRatio;
                 m_diagnostics.smoothedLevel = m_levelMeter.level();
                 m_diagnostics.lastCallbackTimeMs = callbackTimeMs;
                 pcmCallback = m_pcmAudioCallback;

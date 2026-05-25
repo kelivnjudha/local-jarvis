@@ -18,6 +18,9 @@ public:
     [[nodiscard]] double lastRms() const;
 
     [[nodiscard]] static double calculateRms(std::span<const float> samples);
+    [[nodiscard]] static double calculatePeak(std::span<const float> samples);
+    [[nodiscard]] static double amplitudeToDbfs(double amplitude);
+    [[nodiscard]] static double nonZeroSampleRatio(std::span<const float> samples);
     [[nodiscard]] static std::vector<float> mixInterleavedToMono(std::span<const float> samples, int channelCount);
 
 private:

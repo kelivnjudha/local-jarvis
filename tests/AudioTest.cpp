@@ -37,6 +37,12 @@ int main()
     if (!expect(AudioLevelMeter::calculateRms(silence) <= 0.001, "Silence RMS should be near zero.")) {
         return EXIT_FAILURE;
     }
+    if (!expect(AudioLevelMeter::calculatePeak(silence) == 0.0, "Silence peak should be zero.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(AudioLevelMeter::amplitudeToDbfs(0.0) <= -119.0, "Zero amplitude should map to a very low dBFS value.")) {
+        return EXIT_FAILURE;
+    }
 
     const std::array<float, 8> loud {
         1.0F, -1.0F, 0.9F, -0.9F,
@@ -44,6 +50,15 @@ int main()
     };
     const double loudRms = AudioLevelMeter::calculateRms(loud);
     if (!expect(loudRms > 0.8 && loudRms <= 1.0, "Float32 RMS should reflect loud normalized samples.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(AudioLevelMeter::calculatePeak(loud) == 1.0, "Peak helper should report normalized peak amplitude.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(AudioLevelMeter::nonZeroSampleRatio(loud) == 1.0, "Non-zero ratio should count audible samples.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(AudioLevelMeter::amplitudeToDbfs(1.0) > -0.1, "Full-scale amplitude should be near 0 dBFS.")) {
         return EXIT_FAILURE;
     }
     meter.processSamples(loud);
@@ -121,6 +136,10 @@ int main()
         return EXIT_FAILURE;
     }
     if (!expect(diagnostics.sampleRate == 16000 && diagnostics.channelCount == 1, "Dummy diagnostics should report stable test format.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(diagnostics.lastBufferPeak > 0.0 && diagnostics.lastBufferDbfs > -30.0 && diagnostics.lastBufferNonZeroRatio > 0.9,
+            "Dummy diagnostics should expose peak, dBFS, and non-zero sample ratio.")) {
         return EXIT_FAILURE;
     }
     dummyCapture.stopMicrophoneCapture();

@@ -1,5 +1,7 @@
 #include "DummyAudioCapture.h"
 
+#include "AudioLevelMeter.h"
+
 #include <algorithm>
 #include <chrono>
 #include <string>
@@ -83,6 +85,12 @@ bool DummyAudioCapture::startMicrophoneCapture()
         m_diagnostics.sampleRate = 16000;
         m_diagnostics.channelCount = 1;
         m_diagnostics.sampleFormat = "dummy-float32";
+        const double level = dummyLevelForSequence(m_sequence);
+        m_diagnostics.lastBufferRms = level;
+        m_diagnostics.lastBufferPeak = level;
+        m_diagnostics.lastBufferDbfs = AudioLevelMeter::amplitudeToDbfs(level);
+        m_diagnostics.lastBufferNonZeroRatio = 1.0;
+        m_diagnostics.smoothedLevel = level;
         m_diagnostics.lastError.clear();
     }
 
@@ -273,6 +281,9 @@ void DummyAudioCapture::emitTranscript(bool microphoneActive, bool systemAudioAc
             m_diagnostics.framesReceived += static_cast<std::uint64_t>(m_interval.count() * 16);
             m_diagnostics.nonZeroSamplesObserved += 160;
             m_diagnostics.lastBufferRms = level;
+            m_diagnostics.lastBufferPeak = level;
+            m_diagnostics.lastBufferDbfs = AudioLevelMeter::amplitudeToDbfs(level);
+            m_diagnostics.lastBufferNonZeroRatio = 1.0;
             m_diagnostics.smoothedLevel = level;
             m_diagnostics.lastCallbackTimeMs = nowMs();
         }

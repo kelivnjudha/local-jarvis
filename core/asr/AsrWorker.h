@@ -19,6 +19,18 @@ struct AsrWorkerStats {
     std::uint64_t chunksQueued = 0;
     std::uint64_t chunksProcessed = 0;
     std::size_t pendingChunks = 0;
+    std::uint64_t lastChunkId = 0;
+    std::int64_t lastChunkDurationMs = 0;
+    int lastChunkSampleRate = 0;
+    int lastChunkChannels = 0;
+    std::size_t lastChunkInputSamples = 0;
+    std::size_t lastWhisperSampleCount = 0;
+    double lastChunkRms = 0.0;
+    double lastChunkPeak = 0.0;
+    double lastChunkDbfs = -120.0;
+    double lastChunkNonZeroRatio = 0.0;
+    bool lastChunkTreatedAsSilent = false;
+    std::string lastTranscriptText;
     std::string lastError;
 };
 
@@ -63,6 +75,7 @@ private:
     std::string m_lastError;
     std::uint64_t m_chunksQueued = 0;
     std::uint64_t m_chunksProcessed = 0;
+    AsrWorkerStats m_lastDiagnostics;
     bool m_stopRequested = false;
     bool m_running = false;
 };
