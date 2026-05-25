@@ -1,0 +1,4 @@
+Review placeholder:
+Outfit: Comfy Reader
+Accessory: Book Stack
+Default animation: Idle

@@ -28,6 +28,7 @@ private:
     void buildUi();
     void connectSignals();
     void emitPanelAction();
+    void applyWindowFlags(bool visible);
     [[nodiscard]] local_jarvis::companion::CompanionMode selectedMode() const;
 
     local_jarvis::companion::CompanionManager &m_companionManager;

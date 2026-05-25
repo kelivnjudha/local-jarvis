@@ -1,0 +1,4 @@
+Study placeholder:
+Outfit: Study Uniform
+Accessory: Glasses + Notebook
+Default animation: TakingNote

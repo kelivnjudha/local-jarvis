@@ -21,6 +21,7 @@ AssistantPanelWindow::AssistantPanelWindow(
 void AssistantPanelWindow::applyState()
 {
     const auto &state = m_companionManager.state();
+    const auto profile = m_companionManager.visualProfile();
     const QSignalBlocker modeBlocker(m_modeCombo);
     const QSignalBlocker captionsBlocker(m_captionsCheck);
     const QSignalBlocker translationBlocker(m_translationCheck);
@@ -29,10 +30,19 @@ void AssistantPanelWindow::applyState()
     m_captionsCheck->setChecked(state.captionsVisible);
     m_translationCheck->setChecked(state.translationEnabled);
     m_microphoneCheck->setChecked(state.microphoneEnabled);
-    m_statusLabel->setText(QString("Mode: %1 | Animation: %2")
-        .arg(QString::fromStdString(toString(state.currentMode)),
-             QString::fromStdString(toString(state.currentAnimationState))));
-    setVisible(state.companionVisible && state.panelVisible);
+    m_statusLabel->setText(QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4")
+        .arg(QString::fromStdString(profile.displayName),
+             QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)),
+             QString::fromStdString(profile.outfitLabel),
+             QString::fromStdString(profile.accessoryLabel)));
+    setStyleSheet(QString(
+        "QWidget { background: #f8fafc; color: #17202c; }"
+        "QPushButton { min-height: 24px; }"
+        "QComboBox { min-height: 24px; }"
+        "QCheckBox { min-height: 22px; }"
+        "QLabel { border-left: 4px solid %1; padding-left: 8px; }")
+            .arg(QString::fromStdString(local_jarvis::companion::colorToHex(profile.primaryColor))));
+    applyWindowFlags(state.companionVisible && state.panelVisible);
 }
 
 void AssistantPanelWindow::setAnchorPosition(const QPoint &companionTopLeft)
@@ -126,7 +136,6 @@ void AssistantPanelWindow::connectSignals()
 
     connect(m_microphoneCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_companionManager.setMicrophoneEnabled(checked);
-        emitPanelAction();
         if (m_changedCallback) {
             m_changedCallback();
         }
@@ -163,6 +172,18 @@ void AssistantPanelWindow::emitPanelAction()
     if (m_panelActionCallback) {
         m_panelActionCallback();
     }
+}
+
+void AssistantPanelWindow::applyWindowFlags(bool visible)
+{
+    Qt::WindowFlags flags = Qt::Tool;
+    if (m_companionManager.state().alwaysOnTop) {
+        flags |= Qt::WindowStaysOnTopHint;
+    }
+    if (windowFlags() != flags) {
+        setWindowFlags(flags);
+    }
+    setVisible(visible);
 }
 
 local_jarvis::companion::CompanionMode AssistantPanelWindow::selectedMode() const

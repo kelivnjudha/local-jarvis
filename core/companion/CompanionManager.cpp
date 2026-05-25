@@ -3,7 +3,6 @@
 #include "storage/Storage.h"
 
 #include <algorithm>
-#include <cstdlib>
 #include <string>
 
 namespace local_jarvis::companion {
@@ -23,6 +22,11 @@ constexpr const char *kCaptionWidth = "companion.caption.width";
 constexpr const char *kTranslationEnabled = "companion.translation.enabled";
 constexpr const char *kSourceLanguage = "companion.source_language";
 constexpr const char *kTargetLanguage = "companion.target_language";
+constexpr const char *kScale = "companion.scale";
+constexpr const char *kThemePack = "companion.theme_pack";
+constexpr const char *kAnimationEnabled = "companion.animation_enabled";
+constexpr const char *kIdleMotionEnabled = "companion.idle_motion_enabled";
+constexpr const char *kAlwaysOnTop = "companion.always_on_top";
 
 std::string boolText(bool value)
 {
@@ -146,8 +150,17 @@ bool CompanionManager::loadSettings()
     m_state.translationEnabled = settingBool(kTranslationEnabled, defaults.translationEnabled);
     m_state.sourceLanguage = settingString(kSourceLanguage, defaults.sourceLanguage);
     m_state.targetLanguage = settingString(kTargetLanguage, defaults.targetLanguage);
+    m_state.companionScale = clampDouble(settingDouble(kScale, defaults.companionScale), 0.65, 1.6);
+    m_state.themePack = settingString(kThemePack, defaults.themePack);
+    if (m_state.themePack.empty()) {
+        m_state.themePack = defaults.themePack;
+    }
+    m_state.animationEnabled = settingBool(kAnimationEnabled, defaults.animationEnabled);
+    m_state.idleMotionEnabled = settingBool(kIdleMotionEnabled, defaults.idleMotionEnabled);
+    m_state.alwaysOnTop = settingBool(kAlwaysOnTop, defaults.alwaysOnTop);
     m_state.currentAnimationState = AnimationState::Idle;
     m_animationStateMachine.reset();
+    m_animationStateMachine.configure(m_state.animationEnabled, m_state.idleMotionEnabled);
 
     return saveSettings();
 }
@@ -172,6 +185,11 @@ bool CompanionManager::saveSettings()
     saveBool(kTranslationEnabled, m_state.translationEnabled);
     saveString(kSourceLanguage, m_state.sourceLanguage);
     saveString(kTargetLanguage, m_state.targetLanguage);
+    saveDouble(kScale, m_state.companionScale);
+    saveString(kThemePack, m_state.themePack);
+    saveBool(kAnimationEnabled, m_state.animationEnabled);
+    saveBool(kIdleMotionEnabled, m_state.idleMotionEnabled);
+    saveBool(kAlwaysOnTop, m_state.alwaysOnTop);
     return true;
 }
 
@@ -183,6 +201,16 @@ const CompanionState &CompanionManager::state() const
 AnimationStateMachine &CompanionManager::animationStateMachine()
 {
     return m_animationStateMachine;
+}
+
+CompanionVisualProfile CompanionManager::visualProfile() const
+{
+    return defaultVisualProfileForMode(m_state.currentMode);
+}
+
+CompanionAssetRegistry CompanionManager::assetRegistry() const
+{
+    return defaultCompanionAssetRegistry();
 }
 
 void CompanionManager::setCompanionVisible(bool visible)
@@ -207,11 +235,17 @@ void CompanionManager::setMode(CompanionMode mode)
 {
     m_state.currentMode = mode;
     saveString(kMode, toString(mode));
+    if (m_state.currentAnimationState == AnimationState::Idle) {
+        m_animationStateMachine.setState(visualProfile().defaultAnimation);
+        syncAnimationState();
+    }
 }
 
 void CompanionManager::setMicrophoneEnabled(bool enabled)
 {
     m_state.microphoneEnabled = enabled;
+    m_animationStateMachine.onListeningChanged(enabled);
+    syncAnimationState();
 }
 
 void CompanionManager::setTranslationEnabled(bool enabled)
@@ -272,9 +306,58 @@ void CompanionManager::setCompanionLocked(bool locked)
     saveBool(kLocked, locked);
 }
 
+void CompanionManager::setCompanionScale(double scale)
+{
+    m_state.companionScale = clampDouble(scale, 0.65, 1.6);
+    saveDouble(kScale, m_state.companionScale);
+}
+
+void CompanionManager::setThemePack(const std::string &themePack)
+{
+    m_state.themePack = themePack.empty() ? "default" : themePack;
+    saveString(kThemePack, m_state.themePack);
+}
+
+void CompanionManager::setAnimationEnabled(bool enabled)
+{
+    m_state.animationEnabled = enabled;
+    saveBool(kAnimationEnabled, enabled);
+    m_animationStateMachine.configure(m_state.animationEnabled, m_state.idleMotionEnabled);
+    syncAnimationState();
+}
+
+void CompanionManager::setIdleMotionEnabled(bool enabled)
+{
+    m_state.idleMotionEnabled = enabled;
+    saveBool(kIdleMotionEnabled, enabled);
+    m_animationStateMachine.configure(m_state.animationEnabled, m_state.idleMotionEnabled);
+}
+
+void CompanionManager::setAlwaysOnTop(bool alwaysOnTop)
+{
+    m_state.alwaysOnTop = alwaysOnTop;
+    saveBool(kAlwaysOnTop, alwaysOnTop);
+}
+
+void CompanionManager::resetVisualSettings()
+{
+    CompanionState defaults;
+    setCompanionScale(defaults.companionScale);
+    setThemePack(defaults.themePack);
+    setAnimationEnabled(defaults.animationEnabled);
+    setIdleMotionEnabled(defaults.idleMotionEnabled);
+    setAlwaysOnTop(defaults.alwaysOnTop);
+}
+
 void CompanionManager::setAnimationState(AnimationState state)
 {
     m_animationStateMachine.setState(state);
+    syncAnimationState();
+}
+
+void CompanionManager::onCaptionUpdated()
+{
+    m_animationStateMachine.onCaptionUpdated(m_state.currentMode);
     syncAnimationState();
 }
 

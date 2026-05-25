@@ -2,6 +2,7 @@
 
 #include "companion/CompanionManager.h"
 
+#include <QColor>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
@@ -22,6 +23,8 @@ protected:
 
 private:
     void updateDummyCaption();
+    void applyWindowFlags(bool visible);
+    [[nodiscard]] QColor toQColor(const local_jarvis::companion::CompanionColor &color) const;
     [[nodiscard]] QString currentModeCaption() const;
 
     local_jarvis::companion::CompanionManager &m_companionManager;

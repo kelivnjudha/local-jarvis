@@ -1,0 +1,25 @@
+{
+  "characterPackId": "default",
+  "characterName": "Local Jarvis Placeholder",
+  "assetType": "placeholder",
+  "supportedModes": [
+    "Study",
+    "Meeting",
+    "InterviewPractice",
+    "Review"
+  ],
+  "supportedAnimations": [
+    "Idle",
+    "Listening",
+    "Working",
+    "TakingNote",
+    "Walking",
+    "Salute"
+  ],
+  "placeholders": {
+    "Study": "placeholders/study.txt",
+    "Meeting": "placeholders/meeting.txt",
+    "InterviewPractice": "placeholders/interview_practice.txt",
+    "Review": "placeholders/review.txt"
+  }
+}

@@ -3,11 +3,12 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QtMath>
+#include <QtGlobal>
 
 namespace {
 
-constexpr int kWindowWidth = 132;
-constexpr int kWindowHeight = 150;
+constexpr int kBaseWindowWidth = 172;
+constexpr int kBaseWindowHeight = 212;
 
 } // namespace
 
@@ -21,7 +22,7 @@ CompanionWindow::CompanionWindow(
     setAccessibleName("Local Jarvis Companion");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground);
-    setFixedSize(kWindowWidth, kWindowHeight);
+    setFixedSize(kBaseWindowWidth, kBaseWindowHeight);
     setMouseTracking(true);
 
     connect(&m_animationTimer, &QTimer::timeout, this, [this]() {
@@ -34,8 +35,17 @@ CompanionWindow::CompanionWindow(
 void CompanionWindow::applyState()
 {
     const auto &state = m_companionManager.state();
+    const int scaledWidth = static_cast<int>(kBaseWindowWidth * state.companionScale);
+    const int scaledHeight = static_cast<int>(kBaseWindowHeight * state.companionScale);
+    setFixedSize(scaledWidth, scaledHeight);
+    if (state.animationEnabled) {
+        const auto metadata = local_jarvis::companion::metadataForAnimation(state.currentAnimationState);
+        m_animationTimer.start(qMax(60, metadata.transitionDurationMs / 3));
+    } else {
+        m_animationTimer.stop();
+    }
     move(state.anchorX, state.anchorY);
-    setVisible(state.companionVisible);
+    applyWindowFlags(state.companionVisible);
     update();
 }
 
@@ -52,57 +62,105 @@ void CompanionWindow::setMovedCallback(std::function<void(const QPoint &)> callb
 void CompanionWindow::paintEvent(QPaintEvent *)
 {
     const auto &state = m_companionManager.state();
+    const auto profile = m_companionManager.visualProfile();
     const auto animation = state.currentAnimationState;
-    const int bob = static_cast<int>(qSin(m_frame / 8.0) * 4.0);
+    const double scale = state.companionScale;
+    const int bob = state.animationEnabled ? static_cast<int>(qSin(m_frame / 8.0) * 4.0 * scale) : 0;
+    const int pulse = state.animationEnabled ? static_cast<int>(qSin(m_frame / 6.0) * 3.0 * scale) : 0;
     const int yOffset = animation == local_jarvis::companion::AnimationState::Walking ? bob : 0;
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(scale, scale);
 
-    const QColor accent = accentColor();
+    const QColor primary = toQColor(profile.primaryColor);
+    const QColor accent = toQColor(profile.accentColor);
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(18, 22, 28, 225));
-    painter.drawRoundedRect(rect().adjusted(8, 12, -8, -8), 18, 18);
+    painter.drawRoundedRect(QRect(8, 12, kBaseWindowWidth - 16, kBaseWindowHeight - 20), 18, 18);
 
-    painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 60));
-    painter.drawEllipse(QPoint(width() / 2, 78 + yOffset), 46, 54);
+    painter.setBrush(QColor(primary.red(), primary.green(), primary.blue(), 48));
+    painter.drawEllipse(QPoint(kBaseWindowWidth / 2, 78 + yOffset), 52 + pulse, 58 + pulse);
 
-    painter.setBrush(accent);
-    painter.drawEllipse(QPoint(width() / 2, 54 + yOffset), 30, 30);
+    painter.setBrush(primary);
+    painter.drawEllipse(QPoint(kBaseWindowWidth / 2, 54 + yOffset), 30, 30);
+
+    painter.setBrush(QColor(accent.red(), accent.green(), accent.blue(), 210));
+    painter.drawRoundedRect(QRect(kBaseWindowWidth / 2 - 32, 82 + yOffset, 64, 44), 15, 15);
 
     painter.setBrush(QColor(245, 248, 252));
-    painter.drawEllipse(QPoint(width() / 2 - 10, 50 + yOffset), 5, 7);
-    painter.drawEllipse(QPoint(width() / 2 + 10, 50 + yOffset), 5, 7);
+    painter.drawEllipse(QPoint(kBaseWindowWidth / 2 - 10, 50 + yOffset), 5, 7);
+    painter.drawEllipse(QPoint(kBaseWindowWidth / 2 + 10, 50 + yOffset), 5, 7);
 
-    painter.setPen(QPen(QColor(245, 248, 252), 3, Qt::SolidLine, Qt::RoundCap));
-    painter.drawArc(QRect(width() / 2 - 12, 58 + yOffset, 24, 16), 200 * 16, 140 * 16);
-
-    painter.setPen(QPen(accent.lighter(130), 8, Qt::SolidLine, Qt::RoundCap));
-    const QPoint leftShoulder(width() / 2 - 28, 84 + yOffset);
-    const QPoint rightShoulder(width() / 2 + 28, 84 + yOffset);
-    painter.drawLine(leftShoulder, QPoint(width() / 2 - 46, 112 + yOffset));
-    if (animation == local_jarvis::companion::AnimationState::Salute) {
-        painter.drawLine(rightShoulder, QPoint(width() / 2 + 36, 42 + yOffset));
-    } else {
-        painter.drawLine(rightShoulder, QPoint(width() / 2 + 46, 112 + yOffset));
+    if (state.currentMode == local_jarvis::companion::CompanionMode::Study) {
+        painter.setPen(QPen(QColor(20, 24, 30), 2));
+        painter.drawLine(QPoint(kBaseWindowWidth / 2 - 16, 50 + yOffset), QPoint(kBaseWindowWidth / 2 + 16, 50 + yOffset));
+        painter.drawEllipse(QPoint(kBaseWindowWidth / 2 - 10, 51 + yOffset), 8, 6);
+        painter.drawEllipse(QPoint(kBaseWindowWidth / 2 + 10, 51 + yOffset), 8, 6);
     }
 
-    painter.setPen(QPen(accent.lighter(140), 7, Qt::SolidLine, Qt::RoundCap));
-    painter.drawLine(QPoint(width() / 2 - 16, 118 + yOffset), QPoint(width() / 2 - 22, 136));
-    painter.drawLine(QPoint(width() / 2 + 16, 118 + yOffset), QPoint(width() / 2 + 22, 136));
+    painter.setPen(QPen(QColor(245, 248, 252), 3, Qt::SolidLine, Qt::RoundCap));
+    painter.drawArc(QRect(kBaseWindowWidth / 2 - 12, 58 + yOffset, 24, 16), 200 * 16, 140 * 16);
+
+    painter.setPen(QPen(accent.lighter(120), 8, Qt::SolidLine, Qt::RoundCap));
+    const QPoint leftShoulder(kBaseWindowWidth / 2 - 28, 84 + yOffset);
+    const QPoint rightShoulder(kBaseWindowWidth / 2 + 28, 84 + yOffset);
+    painter.drawLine(leftShoulder, QPoint(kBaseWindowWidth / 2 - 48, 112 + yOffset));
+    if (animation == local_jarvis::companion::AnimationState::Salute) {
+        painter.drawLine(rightShoulder, QPoint(kBaseWindowWidth / 2 + 38, 42 + yOffset));
+    } else {
+        painter.drawLine(rightShoulder, QPoint(kBaseWindowWidth / 2 + 48, 112 + yOffset));
+    }
+
+    painter.setPen(QPen(primary.lighter(145), 7, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(QPoint(kBaseWindowWidth / 2 - 16, 118 + yOffset), QPoint(kBaseWindowWidth / 2 - 22, 140));
+    painter.drawLine(QPoint(kBaseWindowWidth / 2 + 16, 118 + yOffset), QPoint(kBaseWindowWidth / 2 + 22, 140));
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(242, 244, 248, 235));
+    if (state.currentMode == local_jarvis::companion::CompanionMode::Meeting) {
+        painter.drawRoundedRect(QRect(112, 80 + yOffset, 24, 34), 4, 4);
+        painter.setBrush(primary);
+        painter.drawRect(QRect(117, 87 + yOffset, 14, 18));
+    } else if (state.currentMode == local_jarvis::companion::CompanionMode::InterviewPractice) {
+        painter.drawRoundedRect(QRect(112, 82 + yOffset, 30, 20), 4, 4);
+        painter.setBrush(primary);
+        painter.drawRect(QRect(117, 88 + yOffset, 20, 2));
+        painter.drawRect(QRect(117, 94 + yOffset, 14, 2));
+    } else if (state.currentMode == local_jarvis::companion::CompanionMode::Review) {
+        painter.drawRoundedRect(QRect(34, 86 + yOffset, 26, 24), 4, 4);
+        painter.setBrush(primary);
+        painter.drawRect(QRect(38, 90 + yOffset, 8, 16));
+        painter.drawRect(QRect(48, 90 + yOffset, 8, 16));
+    } else {
+        painter.drawRoundedRect(QRect(112, 84 + yOffset, 24, 28), 5, 5);
+        painter.setBrush(primary);
+        painter.drawRect(QRect(117, 91 + yOffset, 14, 2));
+        painter.drawRect(QRect(117, 97 + yOffset, 14, 2));
+    }
 
     painter.setPen(QColor(235, 238, 244));
     QFont font = painter.font();
     font.setBold(true);
     font.setPointSize(9);
     painter.setFont(font);
-    painter.drawText(QRect(14, 118, width() - 28, 22), Qt::AlignCenter, modeLabel());
+    painter.drawText(QRect(14, 138, kBaseWindowWidth - 28, 18), Qt::AlignCenter, QString::fromStdString(profile.displayName));
 
     font.setPointSize(8);
     font.setBold(false);
     painter.setFont(font);
     painter.setPen(QColor(185, 194, 206));
-    painter.drawText(QRect(14, 132, width() - 28, 14), Qt::AlignCenter, QString::fromStdString(toString(state.currentAnimationState)));
+    painter.drawText(QRect(12, 156, kBaseWindowWidth - 24, 15), Qt::AlignCenter, QString::fromStdString(profile.outfitLabel));
+    painter.drawText(QRect(12, 172, kBaseWindowWidth - 24, 15), Qt::AlignCenter, QString::fromStdString(profile.accessoryLabel));
+
+    painter.setPen(QColor(214, 221, 230));
+    font.setPointSize(8);
+    font.setBold(true);
+    painter.setFont(font);
+    painter.drawText(
+        QRect(12, 190, kBaseWindowWidth - 24, 14),
+        Qt::AlignCenter,
+        QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)));
 }
 
 void CompanionWindow::mousePressEvent(QMouseEvent *event)
@@ -149,23 +207,19 @@ void CompanionWindow::mouseReleaseEvent(QMouseEvent *event)
     event->accept();
 }
 
-QColor CompanionWindow::accentColor() const
+void CompanionWindow::applyWindowFlags(bool visible)
 {
-    using local_jarvis::companion::CompanionMode;
-    switch (m_companionManager.state().currentMode) {
-    case CompanionMode::Study:
-        return QColor(68, 166, 120);
-    case CompanionMode::Meeting:
-        return QColor(74, 128, 214);
-    case CompanionMode::InterviewPractice:
-        return QColor(206, 132, 65);
-    case CompanionMode::Review:
-        return QColor(144, 114, 210);
+    Qt::WindowFlags flags = Qt::Tool | Qt::FramelessWindowHint;
+    if (m_companionManager.state().alwaysOnTop) {
+        flags |= Qt::WindowStaysOnTopHint;
     }
-    return QColor(68, 166, 120);
+    if (windowFlags() != flags) {
+        setWindowFlags(flags);
+    }
+    setVisible(visible);
 }
 
-QString CompanionWindow::modeLabel() const
+QColor CompanionWindow::toQColor(const local_jarvis::companion::CompanionColor &color) const
 {
-    return QString::fromStdString(toString(m_companionManager.state().currentMode));
+    return QColor(color.red, color.green, color.blue);
 }

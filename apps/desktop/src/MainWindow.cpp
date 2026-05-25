@@ -12,6 +12,7 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPoint>
+#include <QSignalBlocker>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -233,6 +234,27 @@ void MainWindow::buildUi()
     companionButtonLayout->addWidget(m_resetCompanionPositionButton);
     companionButtonLayout->addStretch();
     companionLayout->addLayout(companionButtonLayout);
+
+    m_companionScaleLabel = new QLabel(companionGroup);
+    companionLayout->addWidget(m_companionScaleLabel);
+    m_companionScaleSlider = new QSlider(Qt::Horizontal, companionGroup);
+    m_companionScaleSlider->setRange(75, 140);
+    m_companionScaleSlider->setSingleStep(5);
+    m_companionScaleSlider->setPageStep(10);
+    companionLayout->addWidget(m_companionScaleSlider);
+
+    auto *companionVisualLayout = new QHBoxLayout();
+    m_companionAnimationCheckBox = new QCheckBox("Animation enabled", companionGroup);
+    m_companionIdleMotionCheckBox = new QCheckBox("Idle motion", companionGroup);
+    m_companionAlwaysOnTopCheckBox = new QCheckBox("Always on top", companionGroup);
+    companionVisualLayout->addWidget(m_companionAnimationCheckBox);
+    companionVisualLayout->addWidget(m_companionIdleMotionCheckBox);
+    companionVisualLayout->addWidget(m_companionAlwaysOnTopCheckBox);
+    companionVisualLayout->addStretch();
+    companionLayout->addLayout(companionVisualLayout);
+
+    m_resetCompanionVisualButton = new QPushButton("Reset Visual Profile / Theme", companionGroup);
+    companionLayout->addWidget(m_resetCompanionVisualButton);
     settingsLayout->addWidget(companionGroup);
 
     settingsLayout->addStretch();
@@ -354,6 +376,34 @@ void MainWindow::connectSignals()
 
     connect(m_resetCompanionPositionButton, &QPushButton::clicked, this, [this]() {
         resetCompanionPosition();
+    });
+
+    connect(m_companionScaleSlider, &QSlider::valueChanged, this, [this](int value) {
+        m_companionManager.setCompanionScale(static_cast<double>(value) / 100.0);
+        applyCompanionState();
+    });
+
+    connect(m_companionAnimationCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_companionManager.setAnimationEnabled(checked);
+        if (checked) {
+            setCompanionAnimation(m_companionManager.visualProfile().defaultAnimation);
+        } else {
+            applyCompanionState();
+        }
+    });
+
+    connect(m_companionIdleMotionCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_companionManager.setIdleMotionEnabled(checked);
+        applyCompanionState();
+    });
+
+    connect(m_companionAlwaysOnTopCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_companionManager.setAlwaysOnTop(checked);
+        applyCompanionState();
+    });
+
+    connect(m_resetCompanionVisualButton, &QPushButton::clicked, this, [this]() {
+        resetCompanionVisuals();
     });
 }
 
@@ -490,6 +540,10 @@ void MainWindow::initializeCompanion()
         m_companionManager.animationStateMachine().onTimeout();
         m_companionManager.syncAnimationState();
         applyCompanionState();
+        const auto &state = m_companionManager.state();
+        if (state.animationEnabled && state.idleMotionEnabled && state.companionVisible) {
+            m_companionAnimationResetTimer.start(1800);
+        }
     });
     m_companionAnimationResetTimer.setSingleShot(true);
 
@@ -502,7 +556,9 @@ void MainWindow::initializeCompanion()
         setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
     });
     m_captionBubbleWindow->setCaptionUpdatedCallback([this]() {
-        setCompanionAnimation(local_jarvis::companion::AnimationState::TakingNote);
+        m_companionManager.onCaptionUpdated();
+        applyCompanionState();
+        scheduleCompanionIdle();
     });
     m_assistantPanelWindow->setCallbacks(
         [this]() {
@@ -561,25 +617,52 @@ void MainWindow::refreshCompanionSettings()
     }
 
     const auto &state = m_companionManager.state();
-    m_companionStatusLabel->setText(QString("Mode: %1\nCaptions: %2 | Translation: %3\nPosition: %4, %5\nAnimation: %6")
-        .arg(QString::fromStdString(local_jarvis::companion::toString(state.currentMode)),
+    const auto profile = m_companionManager.visualProfile();
+    m_companionStatusLabel->setText(QString(
+        "Mode: %1\n"
+        "Captions: %2 | Translation: %3\n"
+        "Position: %4, %5 | Scale: %6%\n"
+        "Theme: %7 | Outfit: %8 | Accessory: %9\n"
+        "Animation: %10 | Motion: %11 | Always on top: %12")
+        .arg(QString::fromStdString(profile.displayName),
              enabledText(state.captionsVisible),
              enabledText(state.translationEnabled),
              QString::number(state.anchorX),
              QString::number(state.anchorY),
-             QString::fromStdString(local_jarvis::companion::toString(state.currentAnimationState))));
+             QString::number(static_cast<int>(state.companionScale * 100.0)),
+             QString::fromStdString(state.themePack),
+             QString::fromStdString(profile.outfitLabel),
+             QString::fromStdString(profile.accessoryLabel),
+             QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)),
+             enabledText(state.animationEnabled && state.idleMotionEnabled),
+             enabledText(state.alwaysOnTop)));
+
+    const QSignalBlocker scaleBlocker(m_companionScaleSlider);
+    const QSignalBlocker animationBlocker(m_companionAnimationCheckBox);
+    const QSignalBlocker idleMotionBlocker(m_companionIdleMotionCheckBox);
+    const QSignalBlocker alwaysOnTopBlocker(m_companionAlwaysOnTopCheckBox);
+    m_companionScaleLabel->setText(QString("Companion scale: %1%")
+        .arg(static_cast<int>(state.companionScale * 100.0)));
+    m_companionScaleSlider->setValue(static_cast<int>(state.companionScale * 100.0));
+    m_companionAnimationCheckBox->setChecked(state.animationEnabled);
+    m_companionIdleMotionCheckBox->setChecked(state.idleMotionEnabled);
+    m_companionAlwaysOnTopCheckBox->setChecked(state.alwaysOnTop);
 }
 
 void MainWindow::setCompanionAnimation(local_jarvis::companion::AnimationState state)
 {
     m_companionManager.setAnimationState(state);
     applyCompanionState();
-    scheduleCompanionIdle();
+    if (m_companionManager.state().animationEnabled) {
+        scheduleCompanionIdle();
+    }
 }
 
 void MainWindow::scheduleCompanionIdle()
 {
-    m_companionAnimationResetTimer.start(1400);
+    if (m_companionManager.state().animationEnabled) {
+        m_companionAnimationResetTimer.start(1400);
+    }
 }
 
 void MainWindow::showCompanion()
@@ -600,6 +683,12 @@ void MainWindow::resetCompanionPosition()
     m_companionManager.resetAnchorPosition();
     m_companionManager.setCompanionVisible(true);
     setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
+}
+
+void MainWindow::resetCompanionVisuals()
+{
+    m_companionManager.resetVisualSettings();
+    setCompanionAnimation(m_companionManager.visualProfile().defaultAnimation);
 }
 
 void MainWindow::refreshProcessedOutputs()

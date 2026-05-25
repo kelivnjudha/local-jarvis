@@ -1,0 +1,4 @@
+Meeting placeholder:
+Outfit: Smart Blazer
+Accessory: Tablet
+Default animation: Listening

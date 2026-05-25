@@ -1,7 +1,9 @@
 #pragma once
 
 #include "AnimationStateMachine.h"
+#include "CompanionAssetRegistry.h"
 #include "CompanionState.h"
+#include "CompanionTheme.h"
 
 #include <optional>
 #include <string>
@@ -21,6 +23,8 @@ public:
 
     [[nodiscard]] const CompanionState &state() const;
     [[nodiscard]] AnimationStateMachine &animationStateMachine();
+    [[nodiscard]] CompanionVisualProfile visualProfile() const;
+    [[nodiscard]] CompanionAssetRegistry assetRegistry() const;
 
     void setCompanionVisible(bool visible);
     void setPanelVisible(bool visible);
@@ -36,7 +40,14 @@ public:
     void setAnchorPosition(int x, int y);
     void resetAnchorPosition();
     void setCompanionLocked(bool locked);
+    void setCompanionScale(double scale);
+    void setThemePack(const std::string &themePack);
+    void setAnimationEnabled(bool enabled);
+    void setIdleMotionEnabled(bool enabled);
+    void setAlwaysOnTop(bool alwaysOnTop);
+    void resetVisualSettings();
     void setAnimationState(AnimationState state);
+    void onCaptionUpdated();
     void syncAnimationState();
 
 private:

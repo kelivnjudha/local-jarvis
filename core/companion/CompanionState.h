@@ -22,6 +22,11 @@ struct CompanionState {
     int anchorX = 1200;
     int anchorY = 700;
     bool companionLocked = false;
+    double companionScale = 1.0;
+    std::string themePack = "default";
+    bool animationEnabled = true;
+    bool idleMotionEnabled = true;
+    bool alwaysOnTop = true;
     AnimationState currentAnimationState = AnimationState::Idle;
 };
 

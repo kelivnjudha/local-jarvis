@@ -2,6 +2,7 @@
 
 #include "companion/CompanionManager.h"
 
+#include <QColor>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
@@ -23,8 +24,8 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
 
 private:
-    QColor accentColor() const;
-    QString modeLabel() const;
+    void applyWindowFlags(bool visible);
+    QColor toQColor(const local_jarvis::companion::CompanionColor &color) const;
 
     local_jarvis::companion::CompanionManager &m_companionManager;
     QTimer m_animationTimer;

@@ -11,6 +11,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the caption bubble appears near the companion when captions are enabled.
+- Confirm the companion shows the current mode's outfit/accessory labels.
 
 ## Session Flow
 
@@ -28,9 +29,20 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the companion briefly switches to the salute animation state.
 - Change the mode in the panel.
 - Confirm the mode label and Settings status update.
+- Confirm the companion visual color, outfit label, and accessory label update for the selected mode.
+- Confirm the caption bubble style changes for the selected mode.
+- Confirm the animation state label changes after companion click, panel action, microphone placeholder toggle, or caption update.
 - Toggle captions off and on.
 - Confirm the caption bubble hides and reappears.
 - Toggle translation.
+- Confirm the Settings status updates.
+- Adjust the companion scale slider.
+- Confirm the companion size changes and the scale persists after restart.
+- Toggle animation off.
+- Confirm the companion returns to a still idle pose.
+- Toggle animation on.
+- Confirm panel/caption actions update the animation label again.
+- Toggle idle motion.
 - Confirm the Settings status updates.
 - Drag the companion while it is unlocked.
 - Confirm the companion moves and the position persists after restart.
@@ -40,6 +52,8 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the companion returns.
 - Use Settings > Reset Companion Position.
 - Confirm the companion returns to the default anchor.
+- Use Settings > Reset Visual Profile / Theme.
+- Confirm scale, animation, idle motion, and always-on-top return to defaults.
 
 ## Model Readiness States
 

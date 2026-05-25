@@ -6,6 +6,7 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPushButton>
+#include <QSlider>
 #include <QTabWidget>
 #include <QTextEdit>
 #include <QTimer>
@@ -56,6 +57,7 @@ private:
     void showCompanion();
     void hideCompanion();
     void resetCompanionPosition();
+    void resetCompanionVisuals();
     void refreshProcessedOutputs();
     void appendLifecycleEvent(const QString &message);
     void appendSetupLog(const QString &message);
@@ -100,6 +102,12 @@ private:
     QPushButton *m_showCompanionButton = nullptr;
     QPushButton *m_hideCompanionButton = nullptr;
     QPushButton *m_resetCompanionPositionButton = nullptr;
+    QLabel *m_companionScaleLabel = nullptr;
+    QSlider *m_companionScaleSlider = nullptr;
+    QCheckBox *m_companionAnimationCheckBox = nullptr;
+    QCheckBox *m_companionIdleMotionCheckBox = nullptr;
+    QCheckBox *m_companionAlwaysOnTopCheckBox = nullptr;
+    QPushButton *m_resetCompanionVisualButton = nullptr;
 
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
