@@ -402,6 +402,7 @@ bool WindowsMicrophoneCapture::selectInputDevice(const std::string &deviceId)
     std::lock_guard lock(m_mutex);
     m_selectedDeviceId = deviceId;
     m_diagnostics.selectedDeviceId = deviceId;
+    m_diagnostics.selectedDeviceName.clear();
     return true;
 }
 

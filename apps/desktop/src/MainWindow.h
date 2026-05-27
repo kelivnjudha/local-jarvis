@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "ai/ModelManager.h"
 #include "ai/OllamaClient.h"
@@ -65,6 +66,12 @@ private:
     void startMicrophoneTest();
     void stopMicrophoneTest();
     void finishMicrophoneTest();
+    void startMicrophoneDeviceCompare();
+    void stopMicrophoneDeviceCompare();
+    void advanceMicrophoneDeviceCompare();
+    void startCurrentCompareDevice();
+    void recordCurrentCompareSample(const local_jarvis::audio::MicrophoneDiagnostics &diagnostics);
+    void finishMicrophoneDeviceCompare(bool canceled);
     void loadAsrSettings();
     void saveAsrSettings();
     void setAsrEnabled(bool enabled);
@@ -83,6 +90,8 @@ private:
     void recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details);
     void recordAsrEvent(const std::string &eventType, const std::string &details, const std::optional<std::string> &sessionId = std::nullopt);
     [[nodiscard]] QString microphoneDiagnosticsText() const;
+    [[nodiscard]] QString microphoneDeviceListText() const;
+    [[nodiscard]] QString microphoneRecommendationText() const;
     [[nodiscard]] QString asrBackendText() const;
     [[nodiscard]] QString asrStatusText() const;
     [[nodiscard]] QString whisperStatusText() const;
@@ -127,7 +136,9 @@ private:
     QComboBox *m_microphoneDeviceCombo = nullptr;
     QPushButton *m_refreshMicrophoneDevicesButton = nullptr;
     QPushButton *m_microphoneTestButton = nullptr;
+    QPushButton *m_compareMicrophoneDevicesButton = nullptr;
     QProgressBar *m_microphoneLevelBar = nullptr;
+    QLabel *m_microphoneRecommendationLabel = nullptr;
     QLabel *m_microphoneDiagnosticsLabel = nullptr;
     QLabel *m_microphoneErrorLabel = nullptr;
     QComboBox *m_asrBackendCombo = nullptr;
@@ -208,6 +219,7 @@ private:
     QTimer m_companionAnimationResetTimer;
     QTimer m_microphoneStatusTimer;
     QTimer m_microphoneTestTimer;
+    QTimer m_microphoneCompareTimer;
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
@@ -221,5 +233,30 @@ private:
     bool m_reportedMicrophoneActive = false;
     bool m_microphoneTestActive = false;
     bool m_microphoneTestPreviousMicRequested = false;
+    struct MicrophoneDeviceSnapshot {
+        QString name;
+        std::string id;
+        bool isDefault = false;
+    };
+    struct MicrophoneCompareResult {
+        QString name;
+        std::string id;
+        double bestRms = 0.0;
+        double bestPeak = 0.0;
+        double bestDbfs = -120.0;
+        double bestNonZeroRatio = 0.0;
+        bool started = false;
+    };
+    std::vector<MicrophoneDeviceSnapshot> m_microphoneDevices;
+    std::vector<int> m_microphoneCompareIndices;
+    std::vector<MicrophoneCompareResult> m_microphoneCompareResults;
+    bool m_microphoneCompareActive = false;
+    bool m_microphoneComparePreviousMicRequested = false;
+    int m_microphoneCompareOriginalIndex = -1;
+    int m_microphoneCompareCurrentPosition = -1;
+    int m_microphoneCompareIntervalMs = 1000;
+    MicrophoneCompareResult m_microphoneCompareCurrentResult;
+    QString m_microphoneRecommendation;
+    double m_asrQuietRmsThreshold = 0.01;
     std::string m_lastReportedMicrophoneFailure;
 };

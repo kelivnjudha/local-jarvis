@@ -5,6 +5,7 @@
 #include "companion/AssistantPanelWindow.h"
 #include "companion/CaptionBubbleWindow.h"
 #include "companion/CompanionWindow.h"
+#include "audio/AudioLevelMeter.h"
 
 #include <QDateTime>
 #include <QFileDialog>
@@ -14,6 +15,7 @@
 #include <QMetaObject>
 #include <QPoint>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -41,6 +43,20 @@ QString dbfsText(double dbfs)
 QString percentText(double ratio)
 {
     return QString("%1%").arg(QString::number(std::clamp(ratio, 0.0, 1.0) * 100.0, 'f', 1));
+}
+
+QString levelQualityText(double rms, double peak)
+{
+    if (peak >= 0.90 || rms >= 0.60) {
+        return "Clipping risk";
+    }
+    if (rms >= 0.045 || peak >= 0.20) {
+        return "Good";
+    }
+    if (rms >= 0.010 || peak >= 0.040) {
+        return "Usable";
+    }
+    return "Too quiet";
 }
 
 QString pathText(const std::filesystem::path &path)
@@ -169,6 +185,7 @@ MainWindow::~MainWindow()
     m_destroying.store(true);
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
+    m_microphoneCompareTimer.stop();
     stopAsrPipeline();
     clearPcmAudioCallback();
     stopMicrophoneForShutdown();
@@ -186,6 +203,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_companionAnimationResetTimer.stop();
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
+    m_microphoneCompareTimer.stop();
     stopAsrPipeline();
     clearPcmAudioCallback();
     stopMicrophoneForShutdown();
@@ -269,10 +287,12 @@ void MainWindow::buildUi()
     m_microphoneDeviceCombo->setAccessibleName("Microphone device");
     m_refreshMicrophoneDevicesButton = new QPushButton("Refresh Devices", microphoneGroup);
     m_microphoneTestButton = new QPushButton("Test Mic Level", microphoneGroup);
+    m_compareMicrophoneDevicesButton = new QPushButton("Compare Devices", microphoneGroup);
     microphoneSelectorLayout->addWidget(m_audioModeCombo);
     microphoneSelectorLayout->addWidget(m_microphoneDeviceCombo, 1);
     microphoneSelectorLayout->addWidget(m_refreshMicrophoneDevicesButton);
     microphoneSelectorLayout->addWidget(m_microphoneTestButton);
+    microphoneSelectorLayout->addWidget(m_compareMicrophoneDevicesButton);
     microphoneLayout->addLayout(microphoneSelectorLayout);
 
     m_microphoneLevelBar = new QProgressBar(microphoneGroup);
@@ -281,6 +301,11 @@ void MainWindow::buildUi()
     m_microphoneLevelBar->setValue(0);
     m_microphoneLevelBar->setTextVisible(true);
     microphoneLayout->addWidget(m_microphoneLevelBar);
+
+    m_microphoneRecommendationLabel = new QLabel(microphoneGroup);
+    m_microphoneRecommendationLabel->setWordWrap(true);
+    m_microphoneRecommendationLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    microphoneLayout->addWidget(m_microphoneRecommendationLabel);
 
     auto *microphoneDiagnosticsTitle = new QLabel("Microphone diagnostics", microphoneGroup);
     microphoneLayout->addWidget(microphoneDiagnosticsTitle);
@@ -616,6 +641,14 @@ void MainWindow::connectSignals()
         }
     });
 
+    connect(m_compareMicrophoneDevicesButton, &QPushButton::clicked, this, [this]() {
+        if (m_microphoneCompareActive) {
+            stopMicrophoneDeviceCompare();
+        } else {
+            startMicrophoneDeviceCompare();
+        }
+    });
+
     connect(m_asrBackendCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
         handleAsrBackendChanged(index);
     });
@@ -653,6 +686,11 @@ void MainWindow::connectSignals()
         finishMicrophoneTest();
     });
     m_microphoneTestTimer.setSingleShot(true);
+
+    connect(&m_microphoneCompareTimer, &QTimer::timeout, this, [this]() {
+        advanceMicrophoneDeviceCompare();
+    });
+    m_microphoneCompareTimer.setSingleShot(true);
 
     connect(m_processStudyButton, &QPushButton::clicked, this, [this]() {
         enqueueStudyProcessing();
@@ -872,6 +910,7 @@ void MainWindow::refreshMicrophoneDevices()
 
     const QSignalBlocker blocker(m_microphoneDeviceCombo);
     m_microphoneDeviceCombo->clear();
+    m_microphoneDevices.clear();
 
     const auto devices = activeMicrophoneCapture().listInputDevices();
     if (devices.empty()) {
@@ -890,8 +929,14 @@ void MainWindow::refreshMicrophoneDevices()
     int selectedIndex = 0;
     for (int index = 0; index < static_cast<int>(devices.size()); ++index) {
         const auto &device = devices[static_cast<std::size_t>(index)];
-        const QString label = QString("%1%2")
-            .arg(QString::fromStdString(device.displayName),
+        m_microphoneDevices.push_back(MicrophoneDeviceSnapshot {
+            .name = QString::fromStdString(device.displayName),
+            .id = device.id,
+            .isDefault = device.isDefault
+        });
+        const QString label = QString("%1. %2%3")
+            .arg(QString::number(index + 1),
+                 QString::fromStdString(device.displayName),
                  device.isDefault ? " (default)" : "");
         m_microphoneDeviceCombo->addItem(label, QString::fromStdString(device.id));
         if (!selectedId.empty() && selectedId == device.id) {
@@ -906,6 +951,9 @@ void MainWindow::refreshMicrophoneDevices()
     if (m_microphoneErrorLabel) {
         m_microphoneErrorLabel->clear();
     }
+    if (m_microphoneRecommendationLabel && m_microphoneRecommendation.isEmpty()) {
+        m_microphoneRecommendationLabel->setText("Select Real microphone, then use Test Mic Level or Compare Devices to check input strength.");
+    }
 }
 
 void MainWindow::refreshMicrophoneRuntimeUi()
@@ -915,14 +963,18 @@ void MainWindow::refreshMicrophoneRuntimeUi()
     }
 
     const auto diagnostics = activeMicrophoneCapture().diagnostics();
+    if (m_microphoneCompareActive) {
+        recordCurrentCompareSample(diagnostics);
+    }
     const bool microphoneActive = diagnostics.captureActive;
     const int level = static_cast<int>(std::clamp(diagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
     m_microphoneLevelBar->setValue(level);
     m_microphoneLevelBar->setFormat(microphoneActive
-            ? QString("Mic level: %1% | RMS %2 | Peak %3")
+            ? QString("Mic level: %1% | RMS %2 | Peak %3 | %4")
                 .arg(QString::number(diagnostics.smoothedLevel * 100.0, 'f', 2),
                      dbfsText(diagnostics.lastBufferDbfs),
-                     QString::number(diagnostics.lastBufferPeak, 'f', 4))
+                     dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(diagnostics.lastBufferPeak)),
+                     levelQualityText(diagnostics.lastBufferRms, diagnostics.lastBufferPeak))
             : "Mic level: OFF");
 
     if (m_microphoneDiagnosticsLabel) {
@@ -931,7 +983,22 @@ void MainWindow::refreshMicrophoneRuntimeUi()
 
     if (m_microphoneTestButton) {
         m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
-        m_microphoneTestButton->setEnabled(!sessionActive() || m_microphoneTestActive);
+        m_microphoneTestButton->setEnabled((!sessionActive() && !m_microphoneCompareActive) || m_microphoneTestActive);
+    }
+
+    if (m_compareMicrophoneDevicesButton) {
+        m_compareMicrophoneDevicesButton->setText(m_microphoneCompareActive ? "Stop Compare" : "Compare Devices");
+        m_compareMicrophoneDevicesButton->setEnabled((!sessionActive()
+                && !m_microphoneTestActive
+                && isRealMicrophoneMode()
+                && m_microphoneDeviceCombo
+                && m_microphoneDeviceCombo->count() > 0
+                && !m_microphoneDeviceCombo->itemData(0).toString().isEmpty())
+            || m_microphoneCompareActive);
+    }
+
+    if (m_microphoneRecommendationLabel) {
+        m_microphoneRecommendationLabel->setText(microphoneRecommendationText());
     }
 
     if (m_microphoneErrorLabel) {
@@ -949,7 +1016,8 @@ void MainWindow::refreshMicrophoneRuntimeUi()
 
     const bool wantsMicrophone = m_privacyManager.captureStatus().microphoneEnabled
         && ((m_sessionManager && m_sessionManager->state() == local_jarvis::session::SessionState::Active)
-            || m_microphoneTestActive);
+            || m_microphoneTestActive
+            || m_microphoneCompareActive);
     const std::string lastError = diagnostics.lastError;
     if (!microphoneActive && wantsMicrophone && !lastError.empty() && lastError != m_lastReportedMicrophoneFailure) {
         recordMicrophonePrivacyEvent("microphone_start_failed", lastError);
@@ -977,12 +1045,12 @@ void MainWindow::refreshMicrophoneRuntimeUi()
 
 void MainWindow::handleAudioModeChanged(int)
 {
-    if (sessionActive() || m_microphoneTestActive) {
+    if (sessionActive() || m_microphoneTestActive || m_microphoneCompareActive) {
         const bool activeBackendIsReal = m_realMicrophoneCapture
             && m_activeMicrophoneCapture == m_realMicrophoneCapture.get();
         const QSignalBlocker blocker(m_audioModeCombo);
         m_audioModeCombo->setCurrentIndex(activeBackendIsReal ? 1 : 0);
-        QMessageBox::information(this, "Microphone Active", "Stop the current session or microphone test before changing audio capture mode.");
+        QMessageBox::information(this, "Microphone Active", "Stop the current session, microphone test, or device compare before changing audio capture mode.");
         return;
     }
 
@@ -1025,6 +1093,10 @@ void MainWindow::setMicrophoneRequested(bool enabled)
         stopMicrophoneTest();
         return;
     }
+    if (m_microphoneCompareActive && !enabled) {
+        stopMicrophoneDeviceCompare();
+        return;
+    }
 
     m_privacyManager.setMicrophoneEnabled(enabled);
     if (m_sessionManager) {
@@ -1043,6 +1115,10 @@ void MainWindow::startMicrophoneTest()
 {
     if (sessionActive()) {
         QMessageBox::information(this, "Session Active", "Stop the current session before running the standalone microphone test.");
+        return;
+    }
+    if (m_microphoneCompareActive) {
+        QMessageBox::information(this, "Microphone Compare Active", "Stop the device compare before running the standalone microphone test.");
         return;
     }
 
@@ -1101,6 +1177,175 @@ void MainWindow::finishMicrophoneTest()
     refreshMicrophoneRuntimeUi();
 }
 
+void MainWindow::startMicrophoneDeviceCompare()
+{
+    if (sessionActive()) {
+        QMessageBox::information(this, "Session Active", "Stop the current session before comparing microphone devices.");
+        return;
+    }
+    if (m_microphoneTestActive) {
+        QMessageBox::information(this, "Microphone Test Active", "Stop the current microphone test before comparing devices.");
+        return;
+    }
+    if (!isRealMicrophoneMode()) {
+        QMessageBox::information(this, "Real Microphone Required", "Switch Audio capture mode to Real microphone before comparing input devices.");
+        return;
+    }
+    if (!m_microphoneDeviceCombo || m_microphoneDeviceCombo->count() == 0) {
+        return;
+    }
+
+    m_microphoneCompareIndices.clear();
+    for (int index = 0; index < m_microphoneDeviceCombo->count(); ++index) {
+        if (!m_microphoneDeviceCombo->itemData(index).toString().isEmpty()) {
+            m_microphoneCompareIndices.push_back(index);
+        }
+    }
+    if (m_microphoneCompareIndices.empty()) {
+        QMessageBox::information(this, "No Microphones", "No real microphone input devices are available to compare.");
+        return;
+    }
+
+    m_microphoneCompareActive = true;
+    m_microphoneComparePreviousMicRequested = m_privacyManager.captureStatus().microphoneEnabled;
+    m_microphoneCompareOriginalIndex = m_microphoneDeviceCombo->currentIndex();
+    m_microphoneCompareCurrentPosition = 0;
+    m_microphoneCompareResults.clear();
+    m_microphoneCompareIntervalMs = std::max(500, 10'000 / static_cast<int>(m_microphoneCompareIndices.size()));
+    m_microphoneRecommendation = QString("Comparing %1 listed input device%2 for about 10 seconds. Speak near each candidate if you can; no audio is stored.")
+        .arg(QString::number(m_microphoneCompareIndices.size()),
+             m_microphoneCompareIndices.size() == 1 ? "" : "s");
+
+    m_privacyManager.setMicrophoneEnabled(true);
+    {
+        const QSignalBlocker blocker(m_microphoneCaptureCheckBox);
+        m_microphoneCaptureCheckBox->setChecked(true);
+    }
+
+    recordMicrophonePrivacyEvent("microphone_compare_started", "User started a microphone device level comparison. Only scalar diagnostics are kept.");
+    appendLifecycleEvent(m_microphoneRecommendation);
+    startCurrentCompareDevice();
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
+void MainWindow::stopMicrophoneDeviceCompare()
+{
+    if (!m_microphoneCompareActive) {
+        return;
+    }
+    finishMicrophoneDeviceCompare(true);
+}
+
+void MainWindow::advanceMicrophoneDeviceCompare()
+{
+    if (!m_microphoneCompareActive) {
+        return;
+    }
+
+    recordCurrentCompareSample(activeMicrophoneCapture().diagnostics());
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    m_microphoneCompareResults.push_back(m_microphoneCompareCurrentResult);
+    ++m_microphoneCompareCurrentPosition;
+    startCurrentCompareDevice();
+}
+
+void MainWindow::startCurrentCompareDevice()
+{
+    if (!m_microphoneCompareActive) {
+        return;
+    }
+    if (m_microphoneCompareCurrentPosition < 0
+        || m_microphoneCompareCurrentPosition >= static_cast<int>(m_microphoneCompareIndices.size())) {
+        finishMicrophoneDeviceCompare(false);
+        return;
+    }
+
+    const int comboIndex = m_microphoneCompareIndices[static_cast<std::size_t>(m_microphoneCompareCurrentPosition)];
+    const QString deviceName = m_microphoneDeviceCombo->itemText(comboIndex);
+    const std::string deviceId = m_microphoneDeviceCombo->itemData(comboIndex).toString().toStdString();
+    m_microphoneCompareCurrentResult = MicrophoneCompareResult {
+        .name = deviceName,
+        .id = deviceId
+    };
+
+    {
+        const QSignalBlocker blocker(m_microphoneDeviceCombo);
+        m_microphoneDeviceCombo->setCurrentIndex(comboIndex);
+    }
+    activeMicrophoneCapture().selectInputDevice(deviceId);
+    activeMicrophoneCapture().stopMicrophoneCapture();
+
+    if (!activeMicrophoneCapture().startMicrophoneCapture()) {
+        m_microphoneCompareCurrentResult.started = false;
+        m_microphoneCompareCurrentResult.bestDbfs = -120.0;
+        m_microphoneCompareResults.push_back(m_microphoneCompareCurrentResult);
+        ++m_microphoneCompareCurrentPosition;
+        startCurrentCompareDevice();
+        return;
+    }
+
+    m_microphoneCompareCurrentResult.started = true;
+    m_microphoneRecommendation = QString("Testing %1 (%2/%3)...")
+        .arg(deviceName,
+             QString::number(m_microphoneCompareCurrentPosition + 1),
+             QString::number(m_microphoneCompareIndices.size()));
+    m_microphoneCompareTimer.start(m_microphoneCompareIntervalMs);
+}
+
+void MainWindow::recordCurrentCompareSample(const local_jarvis::audio::MicrophoneDiagnostics &diagnostics)
+{
+    if (!m_microphoneCompareActive || !diagnostics.captureActive) {
+        return;
+    }
+    m_microphoneCompareCurrentResult.bestRms = std::max(m_microphoneCompareCurrentResult.bestRms, diagnostics.lastBufferRms);
+    m_microphoneCompareCurrentResult.bestPeak = std::max(m_microphoneCompareCurrentResult.bestPeak, diagnostics.lastBufferPeak);
+    m_microphoneCompareCurrentResult.bestNonZeroRatio = std::max(m_microphoneCompareCurrentResult.bestNonZeroRatio, diagnostics.lastBufferNonZeroRatio);
+    m_microphoneCompareCurrentResult.bestDbfs = local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(m_microphoneCompareCurrentResult.bestRms);
+}
+
+void MainWindow::finishMicrophoneDeviceCompare(bool canceled)
+{
+    if (!m_microphoneCompareActive) {
+        return;
+    }
+
+    m_microphoneCompareTimer.stop();
+    if (activeMicrophoneCapture().isMicrophoneActive()) {
+        recordCurrentCompareSample(activeMicrophoneCapture().diagnostics());
+    }
+    activeMicrophoneCapture().stopMicrophoneCapture();
+    if (!canceled && !m_microphoneCompareCurrentResult.id.empty()
+        && m_microphoneCompareResults.size() < m_microphoneCompareIndices.size()) {
+        m_microphoneCompareResults.push_back(m_microphoneCompareCurrentResult);
+    }
+
+    if (m_microphoneDeviceCombo && m_microphoneCompareOriginalIndex >= 0
+        && m_microphoneCompareOriginalIndex < m_microphoneDeviceCombo->count()) {
+        const QSignalBlocker blocker(m_microphoneDeviceCombo);
+        m_microphoneDeviceCombo->setCurrentIndex(m_microphoneCompareOriginalIndex);
+        activeMicrophoneCapture().selectInputDevice(
+            m_microphoneDeviceCombo->itemData(m_microphoneCompareOriginalIndex).toString().toStdString());
+    }
+
+    m_microphoneCompareActive = false;
+    m_privacyManager.setMicrophoneEnabled(m_microphoneComparePreviousMicRequested);
+    recordMicrophonePrivacyEvent(
+        "microphone_compare_stopped",
+        canceled ? "User stopped microphone device comparison." : "Microphone device comparison completed.");
+
+    if (canceled) {
+        m_microphoneRecommendation = "Microphone comparison stopped. No audio was stored.";
+    } else {
+        m_microphoneRecommendation = microphoneRecommendationText();
+        appendLifecycleEvent(m_microphoneRecommendation);
+    }
+
+    m_microphoneCompareCurrentPosition = -1;
+    refreshStatus();
+    refreshMicrophoneRuntimeUi();
+}
+
 void MainWindow::loadAsrSettings()
 {
     if (!m_storage.isOpen()) {
@@ -1122,6 +1367,11 @@ void MainWindow::loadAsrSettings()
     } catch (...) {
         m_whisperMaxThreads = 4;
     }
+    try {
+        m_asrQuietRmsThreshold = std::clamp(std::stod(m_storage.getSetting("asr.input_quiet_rms_threshold").value_or("0.01")), 0.0001, 0.2);
+    } catch (...) {
+        m_asrQuietRmsThreshold = 0.01;
+    }
     m_asrEnabled.store(m_storage.getSetting("asr.enabled").value_or("false") == "true");
     resetAsrWorkerForBackend();
     refreshStatus();
@@ -1139,6 +1389,7 @@ void MainWindow::saveAsrSettings()
     m_storage.setSetting("asr.whisper.language", m_whisperLanguage.empty() ? "auto" : m_whisperLanguage);
     m_storage.setSetting("asr.whisper.translate_to_english", m_whisperTranslateToEnglish ? "true" : "false");
     m_storage.setSetting("asr.whisper.max_threads", std::to_string(std::clamp(m_whisperMaxThreads, 1, 16)));
+    m_storage.setSetting("asr.input_quiet_rms_threshold", std::to_string(m_asrQuietRmsThreshold));
 }
 
 void MainWindow::setAsrEnabled(bool enabled)
@@ -1427,13 +1678,21 @@ void MainWindow::stopMicrophoneForShutdown()
 {
     const bool wasActive = activeMicrophoneCapture().isMicrophoneActive();
     const bool wasTestActive = m_microphoneTestActive;
+    const bool wasCompareActive = m_microphoneCompareActive;
     m_microphoneTestTimer.stop();
+    m_microphoneCompareTimer.stop();
     activeMicrophoneCapture().stopMicrophoneCapture();
     m_microphoneTestActive = false;
+    m_microphoneCompareActive = false;
     if (wasTestActive) {
         recordMicrophonePrivacyEvent(
             "microphone_test_stopped",
             "Microphone level diagnostic test stopped during app shutdown.");
+    }
+    if (wasCompareActive) {
+        recordMicrophonePrivacyEvent(
+            "microphone_compare_stopped",
+            "Microphone device comparison stopped during app shutdown.");
     }
     if (wasActive) {
         recordMicrophonePrivacyEvent(
@@ -1508,16 +1767,23 @@ QString MainWindow::microphoneDiagnosticsText() const
     const QString error = diagnostics.lastError.empty()
         ? "none"
         : QString::fromStdString(diagnostics.lastError);
+    const QString selectedUiDevice = m_microphoneDeviceCombo && m_microphoneDeviceCombo->count() > 0
+        ? m_microphoneDeviceCombo->currentText()
+        : "unavailable";
+    const QString quality = levelQualityText(diagnostics.lastBufferRms, diagnostics.lastBufferPeak);
 
     return QString(
-        "Selected device: %1\n"
-        "Device id: %2\n"
-        "Capture active: %3 | Sample rate: %4 Hz | Channels: %5 | Format: %6\n"
-        "Buffers: %7 | Frames: %8 | Non-zero samples: %9\n"
-        "Last buffer RMS: %10 (%11) | Peak: %12 | Non-zero: %13\n"
-        "Smoothed level: %14 | Last callback: %15\n"
-        "Last error: %16")
-        .arg(deviceName,
+        "UI selected device: %1\n"
+        "Selected device: %2\n"
+        "Device id: %3\n"
+        "Capture active: %4 | Sample rate: %5 Hz | Channels: %6 | Format: %7\n"
+        "Buffers: %8 | Frames: %9 | Non-zero samples: %10\n"
+        "Last buffer RMS: %11 (%12) | Peak: %13 (%14) | Non-zero: %15 | %16\n"
+        "Smoothed level: %17 | Last callback: %18\n"
+        "Last error: %19\n"
+        "%20")
+        .arg(selectedUiDevice,
+             deviceName,
              deviceId.isEmpty() ? QString("none") : deviceId,
              diagnostics.captureActive ? "yes" : "no",
              QString::number(diagnostics.sampleRate),
@@ -1529,10 +1795,84 @@ QString MainWindow::microphoneDiagnosticsText() const
              QString::number(diagnostics.lastBufferRms, 'f', 4),
              dbfsText(diagnostics.lastBufferDbfs),
              QString::number(diagnostics.lastBufferPeak, 'f', 4),
+             dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(diagnostics.lastBufferPeak)),
              percentText(diagnostics.lastBufferNonZeroRatio),
+             quality,
              QString::number(diagnostics.smoothedLevel, 'f', 4),
              lastCallback,
-             error);
+             error,
+             microphoneDeviceListText());
+}
+
+QString MainWindow::microphoneDeviceListText() const
+{
+    if (m_microphoneDevices.empty()) {
+        return "Available input devices: none";
+    }
+
+    const std::string selectedId = activeMicrophoneCapture().selectedInputDeviceId();
+    QStringList lines;
+    lines << "Available input devices:";
+    for (int index = 0; index < static_cast<int>(m_microphoneDevices.size()); ++index) {
+        const auto &device = m_microphoneDevices[static_cast<std::size_t>(index)];
+        QStringList tags;
+        if (device.isDefault) {
+            tags << "default";
+        }
+        if (!selectedId.empty() && selectedId == device.id) {
+            tags << "selected";
+        }
+        lines << QString("%1. %2%3")
+            .arg(QString::number(index + 1),
+                 device.name,
+                 tags.isEmpty() ? QString {} : QString(" [%1]").arg(tags.join(", ")));
+    }
+    return lines.join('\n');
+}
+
+QString MainWindow::microphoneRecommendationText() const
+{
+    if (m_microphoneCompareActive) {
+        return m_microphoneRecommendation.isEmpty()
+            ? "Comparing microphone devices..."
+            : m_microphoneRecommendation;
+    }
+    if (m_microphoneCompareResults.empty()) {
+        return m_microphoneRecommendation.isEmpty()
+            ? "Use Test Mic Level for the selected mic or Compare Devices to find the strongest live input. No audio is stored."
+            : m_microphoneRecommendation;
+    }
+
+    const auto best = std::max_element(
+        m_microphoneCompareResults.begin(),
+        m_microphoneCompareResults.end(),
+        [](const MicrophoneCompareResult &left, const MicrophoneCompareResult &right) {
+            return left.bestRms < right.bestRms;
+        });
+    if (best == m_microphoneCompareResults.end()) {
+        return "Microphone comparison completed, but no usable level data was captured.";
+    }
+
+    QStringList lines;
+    lines << QString("Recommended live mic: %1 (%2 RMS, peak %3, %4).")
+            .arg(best->name,
+                 dbfsText(best->bestDbfs),
+                 dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(best->bestPeak)),
+                 levelQualityText(best->bestRms, best->bestPeak));
+    if (best->bestRms < m_asrQuietRmsThreshold) {
+        lines << "Input may still be too quiet for transcription. Move closer, select a different mic, or raise Windows input gain.";
+    }
+    lines << "Compare results:";
+    for (const auto &result : m_microphoneCompareResults) {
+        lines << QString("- %1: RMS %2, peak %3, non-zero %4, %5%6")
+            .arg(result.name,
+                 dbfsText(result.bestDbfs),
+                 dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(result.bestPeak)),
+                 percentText(result.bestNonZeroRatio),
+                 levelQualityText(result.bestRms, result.bestPeak),
+                 result.started ? QString {} : QString(" (could not start)"));
+    }
+    return lines.join('\n');
 }
 
 QString MainWindow::asrBackendText() const
@@ -1570,19 +1910,25 @@ QString MainWindow::whisperStatusText() const
         return "Whisper status: unavailable";
     }
     const auto stats = m_asrWorker->stats();
+    const QString quietWarning = (m_asrEnabled.load()
+            && stats.lastChunkId > 0
+            && stats.lastChunkRms > 0.0
+            && stats.lastChunkRms < m_asrQuietRmsThreshold)
+        ? "\nInput may be too quiet for transcription."
+        : QString {};
     if (stats.status == local_jarvis::asr::AsrStatus::Loading) {
-        return "Whisper status: loading";
+        return QString("Whisper status: loading") + quietWarning;
     }
     if (stats.status == local_jarvis::asr::AsrStatus::Processing) {
-        return "Whisper status: transcribing";
+        return QString("Whisper status: transcribing") + quietWarning;
     }
     if (stats.status == local_jarvis::asr::AsrStatus::Ready || stats.status == local_jarvis::asr::AsrStatus::Listening) {
-        return "Whisper status: ready";
+        return QString("Whisper status: ready") + quietWarning;
     }
     if (stats.status == local_jarvis::asr::AsrStatus::Error) {
-        return "Whisper status: error";
+        return QString("Whisper status: error") + quietWarning;
     }
-    return "Whisper status: model selected";
+    return QString("Whisper status: model selected") + quietWarning;
 }
 
 local_jarvis::asr::AsrBackend MainWindow::selectedAsrBackend() const
@@ -1722,11 +2068,15 @@ void MainWindow::refreshStatus()
         m_whisperStatusLabel->setText(whisperStatusText());
     }
     if (m_asrStatsLabel) {
+        const bool asrChunkTooQuiet = m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
+            && asrStats.lastChunkId > 0
+            && asrStats.lastChunkRms > 0.0
+            && asrStats.lastChunkRms < m_asrQuietRmsThreshold;
         m_asrStatsLabel->setText(QString(
             "Chunks queued: %1 | processed: %2 | pending: %3\n"
             "Last chunk: id %4 | %5 ms | input %6 Hz/%7 ch/%8 samples | Whisper samples: %9\n"
-            "Last chunk RMS: %10 (%11) | peak: %12 | non-zero: %13 | silent: %14\n"
-            "Last ASR text/result: %15")
+            "Last chunk RMS: %10 (%11) | peak: %12 (%13) | non-zero: %14 | silent: %15 | %16\n"
+            "Last ASR text/result: %17%18")
             .arg(QString::number(asrStats.chunksQueued),
                  QString::number(asrStats.chunksProcessed),
                  QString::number(asrStats.pendingChunks),
@@ -1739,9 +2089,12 @@ void MainWindow::refreshStatus()
                  QString::number(asrStats.lastChunkRms, 'f', 4),
                  dbfsText(asrStats.lastChunkDbfs),
                  QString::number(asrStats.lastChunkPeak, 'f', 4),
+                 dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(asrStats.lastChunkPeak)),
                  percentText(asrStats.lastChunkNonZeroRatio),
                  asrStats.lastChunkTreatedAsSilent ? "yes" : "no",
-                 asrStats.lastTranscriptText.empty() ? "none" : QString::fromStdString(asrStats.lastTranscriptText)));
+                 levelQualityText(asrStats.lastChunkRms, asrStats.lastChunkPeak),
+                 asrStats.lastTranscriptText.empty() ? "none" : QString::fromStdString(asrStats.lastTranscriptText),
+                 asrChunkTooQuiet ? "\nInput may be too quiet for transcription." : ""));
     }
     if (m_asrErrorLabel) {
         m_asrErrorLabel->setText(QString("Last ASR error: %1")
@@ -1751,7 +2104,7 @@ void MainWindow::refreshStatus()
         m_aiProcessingStatusLabel->setText("AI processing: idle");
     }
 
-    m_startButton->setEnabled(!active && !m_microphoneTestActive && m_sessionManager != nullptr);
+    m_startButton->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive && m_sessionManager != nullptr);
     m_stopButton->setEnabled(active);
     const bool modelReady = m_setupStatus.modelReady;
     m_processStudyButton->setEnabled(active && modelReady);
@@ -1769,20 +2122,31 @@ void MainWindow::refreshStatus()
     }
     if (m_microphoneTestButton) {
         m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
-        m_microphoneTestButton->setEnabled(!active || m_microphoneTestActive);
+        m_microphoneTestButton->setEnabled((!active && !m_microphoneCompareActive) || m_microphoneTestActive);
+    }
+    if (m_compareMicrophoneDevicesButton) {
+        m_compareMicrophoneDevicesButton->setText(m_microphoneCompareActive ? "Stop Compare" : "Compare Devices");
+        m_compareMicrophoneDevicesButton->setEnabled((!active && !m_microphoneTestActive && isRealMicrophoneMode()
+                && m_microphoneDeviceCombo && m_microphoneDeviceCombo->count() > 0
+                && !m_microphoneDeviceCombo->itemData(0).toString().isEmpty())
+            || m_microphoneCompareActive);
     }
     if (m_asrEnabledCheckBox) {
         const QSignalBlocker asrBlocker(m_asrEnabledCheckBox);
         m_asrEnabledCheckBox->setChecked(m_asrEnabled.load());
     }
     if (m_audioModeCombo) {
-        m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive);
+        m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive);
     }
     if (m_microphoneDeviceCombo) {
-        m_microphoneDeviceCombo->setEnabled(!active && !m_microphoneTestActive && m_microphoneDeviceCombo->count() > 0);
+        m_microphoneDeviceCombo->setEnabled(!active
+            && !m_microphoneTestActive
+            && !m_microphoneCompareActive
+            && m_microphoneDeviceCombo->count() > 0
+            && !m_microphoneDeviceCombo->itemData(0).toString().isEmpty());
     }
     if (m_refreshMicrophoneDevicesButton) {
-        m_refreshMicrophoneDevicesButton->setEnabled(!active && !m_microphoneTestActive);
+        m_refreshMicrophoneDevicesButton->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive);
     }
 }
 
