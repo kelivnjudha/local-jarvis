@@ -10,6 +10,7 @@ namespace {
 
 constexpr const char *kCompanionVisible = "companion.visible";
 constexpr const char *kPanelVisible = "companion.panel.visible";
+constexpr const char *kPanelDefaultOpen = "companion.panel.default_open";
 constexpr const char *kCaptionsVisible = "companion.captions.visible";
 constexpr const char *kMode = "companion.mode";
 constexpr const char *kAnchorX = "companion.anchor_x";
@@ -18,7 +19,13 @@ constexpr const char *kLocked = "companion.locked";
 constexpr const char *kCaptionFontSize = "companion.caption.font_size";
 constexpr const char *kCaptionOpacity = "companion.caption.opacity";
 constexpr const char *kCaptionMaxLines = "companion.caption.max_lines";
-constexpr const char *kCaptionWidth = "companion.caption.width";
+constexpr const char *kCaptionWidthLegacy = "companion.caption.width";
+constexpr const char *kCaptionWidth = "caption.width";
+constexpr const char *kCaptionHeight = "caption.height";
+constexpr const char *kCaptionX = "caption.x";
+constexpr const char *kCaptionY = "caption.y";
+constexpr const char *kCaptionDetached = "caption.detached";
+constexpr const char *kCaptionLocked = "caption.locked";
 constexpr const char *kTranslationEnabled = "companion.translation.enabled";
 constexpr const char *kSourceLanguage = "companion.source_language";
 constexpr const char *kTargetLanguage = "companion.target_language";
@@ -136,8 +143,13 @@ bool CompanionManager::loadSettings()
     }
 
     CompanionState defaults;
-    m_state.companionVisible = settingBool(kCompanionVisible, defaults.companionVisible);
-    m_state.panelVisible = settingBool(kPanelVisible, defaults.panelVisible);
+    (void)settingBool(kCompanionVisible, defaults.companionVisible);
+    m_state.companionVisible = true;
+    saveBool(kCompanionVisible, true);
+    m_state.panelDefaultOpen = settingBool(kPanelDefaultOpen, defaults.panelDefaultOpen);
+    m_state.panelVisible = m_state.panelDefaultOpen
+        ? true
+        : settingBool(kPanelVisible, defaults.panelVisible);
     m_state.captionsVisible = settingBool(kCaptionsVisible, defaults.captionsVisible);
     m_state.currentMode = companionModeFromString(settingString(kMode, toString(defaults.currentMode)));
     m_state.anchorX = settingInt(kAnchorX, defaults.anchorX);
@@ -146,7 +158,27 @@ bool CompanionManager::loadSettings()
     m_state.captionFontSize = clampInt(settingInt(kCaptionFontSize, defaults.captionFontSize), 12, 48);
     m_state.captionOpacity = clampDouble(settingDouble(kCaptionOpacity, defaults.captionOpacity), 0.2, 1.0);
     m_state.captionMaxLines = clampInt(settingInt(kCaptionMaxLines, defaults.captionMaxLines), 1, 5);
-    m_state.captionWidth = clampInt(settingInt(kCaptionWidth, defaults.captionWidth), 260, 900);
+    auto captionWidthSetting = m_storage.getSetting(kCaptionWidth);
+    if (!captionWidthSetting.has_value()) {
+        captionWidthSetting = m_storage.getSetting(kCaptionWidthLegacy);
+    }
+    if (captionWidthSetting.has_value()) {
+        try {
+            m_state.captionWidth = clampInt(std::stoi(*captionWidthSetting), 260, 1200);
+        } catch (...) {
+            m_state.captionWidth = defaults.captionWidth;
+        }
+        saveInt(kCaptionWidth, m_state.captionWidth);
+        saveInt(kCaptionWidthLegacy, m_state.captionWidth);
+    } else {
+        m_state.captionWidth = clampInt(settingInt(kCaptionWidth, defaults.captionWidth), 260, 1200);
+        saveInt(kCaptionWidthLegacy, m_state.captionWidth);
+    }
+    m_state.captionHeight = clampInt(settingInt(kCaptionHeight, defaults.captionHeight), 80, 500);
+    m_state.captionX = settingInt(kCaptionX, defaults.captionX);
+    m_state.captionY = settingInt(kCaptionY, defaults.captionY);
+    m_state.captionDetached = settingBool(kCaptionDetached, defaults.captionDetached);
+    m_state.captionLocked = settingBool(kCaptionLocked, defaults.captionLocked);
     m_state.translationEnabled = settingBool(kTranslationEnabled, defaults.translationEnabled);
     m_state.sourceLanguage = settingString(kSourceLanguage, defaults.sourceLanguage);
     m_state.targetLanguage = settingString(kTargetLanguage, defaults.targetLanguage);
@@ -171,8 +203,10 @@ bool CompanionManager::saveSettings()
         return false;
     }
 
-    saveBool(kCompanionVisible, m_state.companionVisible);
+    m_state.companionVisible = true;
+    saveBool(kCompanionVisible, true);
     saveBool(kPanelVisible, m_state.panelVisible);
+    saveBool(kPanelDefaultOpen, m_state.panelDefaultOpen);
     saveBool(kCaptionsVisible, m_state.captionsVisible);
     saveString(kMode, toString(m_state.currentMode));
     saveInt(kAnchorX, m_state.anchorX);
@@ -182,6 +216,12 @@ bool CompanionManager::saveSettings()
     saveDouble(kCaptionOpacity, m_state.captionOpacity);
     saveInt(kCaptionMaxLines, m_state.captionMaxLines);
     saveInt(kCaptionWidth, m_state.captionWidth);
+    saveInt(kCaptionWidthLegacy, m_state.captionWidth);
+    saveInt(kCaptionHeight, m_state.captionHeight);
+    saveInt(kCaptionX, m_state.captionX);
+    saveInt(kCaptionY, m_state.captionY);
+    saveBool(kCaptionDetached, m_state.captionDetached);
+    saveBool(kCaptionLocked, m_state.captionLocked);
     saveBool(kTranslationEnabled, m_state.translationEnabled);
     saveString(kSourceLanguage, m_state.sourceLanguage);
     saveString(kTargetLanguage, m_state.targetLanguage);
@@ -215,14 +255,21 @@ CompanionAssetRegistry CompanionManager::assetRegistry() const
 
 void CompanionManager::setCompanionVisible(bool visible)
 {
-    m_state.companionVisible = visible;
-    saveBool(kCompanionVisible, visible);
+    (void)visible;
+    m_state.companionVisible = true;
+    saveBool(kCompanionVisible, true);
 }
 
 void CompanionManager::setPanelVisible(bool visible)
 {
     m_state.panelVisible = visible;
     saveBool(kPanelVisible, visible);
+}
+
+void CompanionManager::setPanelDefaultOpen(bool defaultOpen)
+{
+    m_state.panelDefaultOpen = defaultOpen;
+    saveBool(kPanelDefaultOpen, defaultOpen);
 }
 
 void CompanionManager::setCaptionsVisible(bool visible)
@@ -282,8 +329,53 @@ void CompanionManager::setCaptionMaxLines(int maxLines)
 
 void CompanionManager::setCaptionWidth(int width)
 {
-    m_state.captionWidth = clampInt(width, 260, 900);
+    m_state.captionWidth = clampInt(width, 260, 1200);
     saveInt(kCaptionWidth, m_state.captionWidth);
+    saveInt(kCaptionWidthLegacy, m_state.captionWidth);
+}
+
+void CompanionManager::setCaptionHeight(int height)
+{
+    m_state.captionHeight = clampInt(height, 80, 500);
+    saveInt(kCaptionHeight, m_state.captionHeight);
+}
+
+void CompanionManager::setCaptionPosition(int x, int y)
+{
+    m_state.captionX = x;
+    m_state.captionY = y;
+    saveInt(kCaptionX, x);
+    saveInt(kCaptionY, y);
+}
+
+void CompanionManager::setCaptionSize(int width, int height)
+{
+    setCaptionWidth(width);
+    setCaptionHeight(height);
+}
+
+void CompanionManager::setCaptionGeometry(int x, int y, int width, int height)
+{
+    setCaptionPosition(x, y);
+    setCaptionSize(width, height);
+}
+
+void CompanionManager::resetCaptionGeometry()
+{
+    CompanionState defaults;
+    setCaptionGeometry(defaults.captionX, defaults.captionY, defaults.captionWidth, defaults.captionHeight);
+}
+
+void CompanionManager::setCaptionDetached(bool detached)
+{
+    m_state.captionDetached = detached;
+    saveBool(kCaptionDetached, detached);
+}
+
+void CompanionManager::setCaptionLocked(bool locked)
+{
+    m_state.captionLocked = locked;
+    saveBool(kCaptionLocked, locked);
 }
 
 void CompanionManager::setAnchorPosition(int x, int y)

@@ -14,7 +14,8 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
 - Confirm the Local ASR section renders Whisper settings: model path, Browse Model, language, translate toggle, max threads, and Whisper status.
 - Confirm the companion shell appears as a small always-on-top window.
-- Confirm the caption bubble appears near the companion when captions are enabled.
+- Confirm the assistant panel is open by default near the companion.
+- Confirm the caption bubble appears when captions are enabled.
 - Confirm the companion shows the current mode's outfit/accessory labels.
 
 ## Session Flow
@@ -30,7 +31,9 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 ## Companion Shell
 
 - Click the companion.
-- Confirm the compact assistant panel opens.
+- Confirm the compact assistant panel collapses/closes while the companion remains visible.
+- Click the companion again.
+- Confirm the compact assistant panel opens near the companion.
 - Confirm the companion briefly switches to the salute animation state.
 - Change the mode in the panel.
 - Confirm the mode label and Settings status update.
@@ -64,13 +67,21 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Toggle idle motion.
 - Confirm the Settings status updates.
 - Drag the companion while it is unlocked.
-- Confirm the companion moves and the position persists after restart.
-- Use Settings > Hide Companion.
-- Confirm the companion, panel, and captions hide.
-- Use Settings > Show Companion.
-- Confirm the companion returns.
-- Use Settings > Reset Companion Position.
-- Confirm the companion returns to the default anchor.
+- Confirm the companion can move anywhere on the visible desktop area and the position persists after restart.
+- Use Settings > Close Assistant Panel.
+- Confirm the assistant panel closes and the companion remains visible.
+- Use Settings > Open Assistant Panel.
+- Confirm the panel returns near the current companion position.
+- Use Settings > Reset Robot Position.
+- Confirm the companion returns to a safe default corner.
+- Drag the caption bubble independently from the companion while caption placement is unlocked.
+- Confirm the caption bubble position persists after restart.
+- Resize the caption bubble with the corner handle.
+- Confirm caption text reflows and the caption size persists after restart.
+- Use Settings > Lock caption position.
+- Confirm caption dragging/resizing is disabled until unlocked again.
+- Use Settings > Reset Caption Position.
+- Confirm caption position and size return to a safe default.
 - Use Settings > Reset Visual Profile / Theme.
 - Confirm scale, animation, idle motion, and always-on-top return to defaults.
 

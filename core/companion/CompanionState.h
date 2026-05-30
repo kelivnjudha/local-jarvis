@@ -8,7 +8,8 @@ namespace local_jarvis::companion {
 
 struct CompanionState {
     bool companionVisible = true;
-    bool panelVisible = false;
+    bool panelVisible = true;
+    bool panelDefaultOpen = true;
     bool captionsVisible = true;
     CompanionMode currentMode = CompanionMode::Study;
     bool microphoneEnabled = false;
@@ -19,6 +20,11 @@ struct CompanionState {
     double captionOpacity = 0.85;
     int captionMaxLines = 2;
     int captionWidth = 520;
+    int captionHeight = 140;
+    int captionX = 680;
+    int captionY = 520;
+    bool captionDetached = true;
+    bool captionLocked = false;
     int anchorX = 1200;
     int anchorY = 700;
     bool companionLocked = false;

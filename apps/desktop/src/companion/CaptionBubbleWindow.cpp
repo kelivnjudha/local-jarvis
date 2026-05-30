@@ -1,7 +1,43 @@
 #include "companion/CaptionBubbleWindow.h"
 
+#include <QGuiApplication>
+#include <QMouseEvent>
 #include <QPainter>
+#include <QScreen>
 #include <QtGlobal>
+
+namespace {
+
+constexpr int kCaptionMinimumWidth = 260;
+constexpr int kCaptionMinimumHeight = 80;
+constexpr int kCaptionMaximumWidth = 1200;
+constexpr int kCaptionMaximumHeight = 500;
+constexpr int kResizeHandleSize = 22;
+constexpr int kMinimumVisiblePixels = 48;
+
+QRect availableDesktopGeometry()
+{
+    QRect combined;
+    const auto screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        combined = combined.isNull() ? screen->availableGeometry() : combined.united(screen->availableGeometry());
+    }
+    return combined.isNull() ? QRect(0, 0, 1280, 720) : combined;
+}
+
+QPoint clampTopLeftToDesktop(const QPoint &topLeft, const QSize &size)
+{
+    const QRect desktop = availableDesktopGeometry();
+    const int minimumX = desktop.left() - size.width() + kMinimumVisiblePixels;
+    const int maximumX = desktop.right() - kMinimumVisiblePixels;
+    const int minimumY = desktop.top();
+    const int maximumY = desktop.bottom() - kMinimumVisiblePixels;
+    return QPoint(
+        qBound(minimumX, topLeft.x(), maximumX),
+        qBound(minimumY, topLeft.y(), maximumY));
+}
+
+} // namespace
 
 CaptionBubbleWindow::CaptionBubbleWindow(
     local_jarvis::companion::CompanionManager &companionManager,
@@ -17,6 +53,7 @@ CaptionBubbleWindow::CaptionBubbleWindow(
     setAccessibleName("Local Jarvis Caption Bubble");
     setWindowFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     setAttribute(Qt::WA_TranslucentBackground);
+    setMouseTracking(true);
 
     m_captionLabel = new QLabel(this);
     m_captionLabel->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -35,12 +72,24 @@ void CaptionBubbleWindow::applyState()
     const auto &state = m_companionManager.state();
     const auto &captionState = m_captionManager.state();
     refreshCaptionText();
-    resize(state.captionWidth, qMax(80, state.captionFontSize * (captionState.maxLines + 2)));
+    if (!m_resizing) {
+        const QSize requestedSize(
+            qBound(kCaptionMinimumWidth, state.captionWidth, kCaptionMaximumWidth),
+            qBound(kCaptionMinimumHeight, state.captionHeight, kCaptionMaximumHeight));
+        resize(requestedSize);
+    }
     if (m_captionLabel) {
-        m_captionLabel->setGeometry(rect().adjusted(20, 18, -20, -14));
+        m_captionLabel->setGeometry(rect().adjusted(20, 34, -20, -18));
     }
     updateCaptionLabelStyle();
     setWindowOpacity(state.captionOpacity);
+    if (state.captionDetached && !m_dragging && !m_resizing) {
+        const QPoint clampedPosition = clampTopLeftToDesktop(QPoint(state.captionX, state.captionY), size());
+        move(clampedPosition);
+        if (clampedPosition.x() != state.captionX || clampedPosition.y() != state.captionY) {
+            m_companionManager.setCaptionPosition(clampedPosition.x(), clampedPosition.y());
+        }
+    }
     applyWindowFlags(state.companionVisible
         && state.captionsVisible
         && captionState.captionsEnabled
@@ -50,14 +99,23 @@ void CaptionBubbleWindow::applyState()
 
 void CaptionBubbleWindow::setAnchorPosition(const QPoint &companionTopLeft)
 {
+    if (m_companionManager.state().captionDetached) {
+        return;
+    }
     m_companionTopLeft = companionTopLeft;
     const int companionWidth = static_cast<int>(172 * m_companionManager.state().companionScale);
-    move(m_companionTopLeft + QPoint(-qMax(0, width() - companionWidth), -height() - 12));
+    const QPoint requested = m_companionTopLeft + QPoint(-qMax(0, width() - companionWidth), -height() - 12);
+    move(clampTopLeftToDesktop(requested, size()));
 }
 
 void CaptionBubbleWindow::setCaptionUpdatedCallback(std::function<void()> callback)
 {
     m_captionUpdatedCallback = std::move(callback);
+}
+
+void CaptionBubbleWindow::setGeometryChangedCallback(std::function<void()> callback)
+{
+    m_geometryChangedCallback = std::move(callback);
 }
 
 void CaptionBubbleWindow::setMicrophonePlaceholderText(const QString &text)
@@ -124,9 +182,98 @@ void CaptionBubbleWindow::paintEvent(QPaintEvent *)
 
     painter.setPen(Qt::NoPen);
     painter.setBrush(QColor(border.red(), border.green(), border.blue(), 70));
-    painter.drawRoundedRect(QRect(12, 10, 92, 18), 8, 8);
+    painter.drawRoundedRect(dragHandleRect(), 8, 8);
+
+    QFont headerFont = painter.font();
+    headerFont.setBold(true);
+    headerFont.setPointSize(8);
+    painter.setFont(headerFont);
+    painter.setPen(foreground);
+    painter.drawText(dragHandleRect().adjusted(10, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, "Captions");
+
+    const QRect handle = resizeHandleRect();
+    painter.setPen(QPen(border, 2, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(handle.bottomLeft() + QPoint(5, -2), handle.bottomRight() + QPoint(-2, -9));
+    painter.drawLine(handle.bottomLeft() + QPoint(11, -2), handle.bottomRight() + QPoint(-2, -3));
 
     Q_UNUSED(foreground);
+}
+
+void CaptionBubbleWindow::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton) {
+        return QWidget::mousePressEvent(event);
+    }
+    if (m_companionManager.state().captionLocked) {
+        return QWidget::mousePressEvent(event);
+    }
+
+    m_dragStartGlobal = event->globalPosition().toPoint();
+    m_movedDuringDrag = false;
+    if (resizeHandleRect().contains(event->position().toPoint())) {
+        m_resizing = true;
+        m_resizeStartGeometry = geometry();
+    } else {
+        m_dragging = true;
+        m_dragWindowOffset = m_dragStartGlobal - frameGeometry().topLeft();
+    }
+    event->accept();
+}
+
+void CaptionBubbleWindow::mouseMoveEvent(QMouseEvent *event)
+{
+    if (m_companionManager.state().captionLocked) {
+        return QWidget::mouseMoveEvent(event);
+    }
+
+    const QPoint globalPosition = event->globalPosition().toPoint();
+    if (m_resizing) {
+        const QPoint delta = globalPosition - m_dragStartGlobal;
+        const int newWidth = qBound(kCaptionMinimumWidth, m_resizeStartGeometry.width() + delta.x(), kCaptionMaximumWidth);
+        const int newHeight = qBound(kCaptionMinimumHeight, m_resizeStartGeometry.height() + delta.y(), kCaptionMaximumHeight);
+        resize(newWidth, newHeight);
+        if (m_captionLabel) {
+            m_captionLabel->setGeometry(rect().adjusted(20, 34, -20, -18));
+        }
+        m_movedDuringDrag = true;
+        update();
+        event->accept();
+        return;
+    }
+
+    if (m_dragging) {
+        if ((globalPosition - m_dragStartGlobal).manhattanLength() > 4) {
+            m_movedDuringDrag = true;
+        }
+        move(globalPosition - m_dragWindowOffset);
+        event->accept();
+        return;
+    }
+
+    setCursor(resizeHandleRect().contains(event->position().toPoint()) ? Qt::SizeFDiagCursor : Qt::ArrowCursor);
+    QWidget::mouseMoveEvent(event);
+}
+
+void CaptionBubbleWindow::mouseReleaseEvent(QMouseEvent *event)
+{
+    if (event->button() != Qt::LeftButton || (!m_dragging && !m_resizing)) {
+        return QWidget::mouseReleaseEvent(event);
+    }
+
+    const bool geometryChanged = m_movedDuringDrag;
+    m_dragging = false;
+    m_resizing = false;
+    m_movedDuringDrag = false;
+    if (geometryChanged) {
+        const QPoint clampedPosition = clampTopLeftToDesktop(pos(), size());
+        move(clampedPosition);
+        m_companionManager.setCaptionDetached(true);
+        m_companionManager.setCaptionGeometry(clampedPosition.x(), clampedPosition.y(), width(), height());
+        if (m_geometryChangedCallback) {
+            m_geometryChangedCallback();
+        }
+    }
+    event->accept();
 }
 
 void CaptionBubbleWindow::updateDummyCaption()
@@ -178,6 +325,16 @@ void CaptionBubbleWindow::updateCaptionLabelStyle()
     m_captionLabel->setStyleSheet(QString("background: transparent; color: %1; font-size: %2pt; font-weight: 700;")
         .arg(foreground.name(QColor::HexRgb),
              QString::number(m_companionManager.state().captionFontSize)));
+}
+
+QRect CaptionBubbleWindow::resizeHandleRect() const
+{
+    return QRect(width() - kResizeHandleSize - 4, height() - kResizeHandleSize - 4, kResizeHandleSize, kResizeHandleSize);
+}
+
+QRect CaptionBubbleWindow::dragHandleRect() const
+{
+    return QRect(12, 10, qMin(120, qMax(92, width() / 3)), 18);
 }
 
 QColor CaptionBubbleWindow::toQColor(const local_jarvis::companion::CompanionColor &color) const

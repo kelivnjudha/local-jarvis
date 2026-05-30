@@ -1,7 +1,9 @@
 #include "companion/CompanionWindow.h"
 
+#include <QGuiApplication>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QScreen>
 #include <QtMath>
 #include <QtGlobal>
 
@@ -9,6 +11,29 @@ namespace {
 
 constexpr int kBaseWindowWidth = 172;
 constexpr int kBaseWindowHeight = 212;
+constexpr int kMinimumVisiblePixels = 48;
+
+QRect availableDesktopGeometry()
+{
+    QRect combined;
+    const auto screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        combined = combined.isNull() ? screen->availableGeometry() : combined.united(screen->availableGeometry());
+    }
+    return combined.isNull() ? QRect(0, 0, 1280, 720) : combined;
+}
+
+QPoint clampTopLeftToDesktop(const QPoint &topLeft, const QSize &size)
+{
+    const QRect desktop = availableDesktopGeometry();
+    const int minimumX = desktop.left() - size.width() + kMinimumVisiblePixels;
+    const int maximumX = desktop.right() - kMinimumVisiblePixels;
+    const int minimumY = desktop.top();
+    const int maximumY = desktop.bottom() - kMinimumVisiblePixels;
+    return QPoint(
+        qBound(minimumX, topLeft.x(), maximumX),
+        qBound(minimumY, topLeft.y(), maximumY));
+}
 
 } // namespace
 
@@ -44,8 +69,12 @@ void CompanionWindow::applyState()
     } else {
         m_animationTimer.stop();
     }
-    move(state.anchorX, state.anchorY);
-    applyWindowFlags(state.companionVisible);
+    const QPoint clampedPosition = clampTopLeftToDesktop(QPoint(state.anchorX, state.anchorY), size());
+    move(clampedPosition);
+    if (clampedPosition.x() != state.anchorX || clampedPosition.y() != state.anchorY) {
+        m_companionManager.setAnchorPosition(clampedPosition.x(), clampedPosition.y());
+    }
+    applyWindowFlags(true);
     update();
 }
 

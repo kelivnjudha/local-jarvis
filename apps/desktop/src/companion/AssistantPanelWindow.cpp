@@ -1,8 +1,35 @@
 #include "companion/AssistantPanelWindow.h"
 
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QScreen>
 #include <QSignalBlocker>
 #include <QVBoxLayout>
+
+namespace {
+
+constexpr int kPanelCompanionOffset = 184;
+constexpr int kPanelMargin = 12;
+
+QRect availableDesktopGeometry()
+{
+    QRect combined;
+    const auto screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        combined = combined.isNull() ? screen->availableGeometry() : combined.united(screen->availableGeometry());
+    }
+    return combined.isNull() ? QRect(0, 0, 1280, 720) : combined;
+}
+
+QPoint clampPanelTopLeft(const QPoint &topLeft, const QSize &size)
+{
+    const QRect desktop = availableDesktopGeometry().adjusted(kPanelMargin, kPanelMargin, -kPanelMargin, -kPanelMargin);
+    return QPoint(
+        qBound(desktop.left(), topLeft.x(), qMax(desktop.left(), desktop.right() - size.width())),
+        qBound(desktop.top(), topLeft.y(), qMax(desktop.top(), desktop.bottom() - size.height())));
+}
+
+} // namespace
 
 AssistantPanelWindow::AssistantPanelWindow(
     local_jarvis::companion::CompanionManager &companionManager,
@@ -64,7 +91,12 @@ void AssistantPanelWindow::setAsrState(bool enabled, const QString &statusText)
 
 void AssistantPanelWindow::setAnchorPosition(const QPoint &companionTopLeft)
 {
-    move(companionTopLeft + QPoint(-width() - 12, 0));
+    QPoint candidate = companionTopLeft + QPoint(-width() - kPanelMargin, 0);
+    const QRect desktop = availableDesktopGeometry();
+    if (candidate.x() < desktop.left() + kPanelMargin) {
+        candidate = companionTopLeft + QPoint(kPanelCompanionOffset, 0);
+    }
+    move(clampPanelTopLeft(candidate, size()));
 }
 
 void AssistantPanelWindow::setCallbacks(

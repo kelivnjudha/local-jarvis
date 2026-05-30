@@ -10,14 +10,17 @@
 #include <QDateTime>
 #include <QFileDialog>
 #include <QGroupBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPoint>
+#include <QScreen>
 #include <QSignalBlocker>
 #include <QStringList>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
@@ -57,6 +60,35 @@ QString levelQualityText(double rms, double peak)
         return "Usable";
     }
     return "Too quiet";
+}
+
+QRect availableDesktopGeometry()
+{
+    QRect combined;
+    const auto screens = QGuiApplication::screens();
+    for (QScreen *screen : screens) {
+        combined = combined.isNull() ? screen->availableGeometry() : combined.united(screen->availableGeometry());
+    }
+    return combined.isNull() ? QRect(0, 0, 1280, 720) : combined;
+}
+
+QPoint safeRobotPosition(const QSize &robotSize)
+{
+    const QRect desktop = availableDesktopGeometry();
+    return QPoint(
+        qMax(desktop.left() + 24, desktop.right() - robotSize.width() - 32),
+        qMax(desktop.top() + 24, desktop.bottom() - robotSize.height() - 56));
+}
+
+QRect safeCaptionGeometry()
+{
+    const QRect desktop = availableDesktopGeometry();
+    const QSize captionSize(520, 140);
+    return QRect(
+        qMax(desktop.left() + 24, desktop.center().x() - captionSize.width() / 2),
+        qMax(desktop.top() + 24, desktop.bottom() - captionSize.height() - 84),
+        captionSize.width(),
+        captionSize.height());
 }
 
 QString pathText(const std::filesystem::path &path)
@@ -462,19 +494,19 @@ void MainWindow::buildUi()
     m_deleteModelInstructions->setPlainText("To delete a local model, run this in a terminal:\n\nollama rm gemma4:e4b\n\nLocal Jarvis does not delete models automatically.");
     settingsLayout->addWidget(m_deleteModelInstructions);
 
-    auto *companionGroup = new QGroupBox("Companion", settingsPage);
+    auto *companionGroup = new QGroupBox("Robot", settingsPage);
     auto *companionLayout = new QVBoxLayout(companionGroup);
     m_companionStatusLabel = new QLabel(companionGroup);
     m_companionStatusLabel->setWordWrap(true);
     companionLayout->addWidget(m_companionStatusLabel);
 
     auto *companionButtonLayout = new QHBoxLayout();
-    m_showCompanionButton = new QPushButton("Show Companion", companionGroup);
-    m_hideCompanionButton = new QPushButton("Hide Companion", companionGroup);
-    m_resetCompanionPositionButton = new QPushButton("Reset Companion Position", companionGroup);
-    companionButtonLayout->addWidget(m_showCompanionButton);
-    companionButtonLayout->addWidget(m_hideCompanionButton);
-    companionButtonLayout->addWidget(m_resetCompanionPositionButton);
+    m_openAssistantPanelButton = new QPushButton("Open Assistant Panel", companionGroup);
+    m_closeAssistantPanelButton = new QPushButton("Close Assistant Panel", companionGroup);
+    m_resetRobotPositionButton = new QPushButton("Reset Robot Position", companionGroup);
+    companionButtonLayout->addWidget(m_openAssistantPanelButton);
+    companionButtonLayout->addWidget(m_closeAssistantPanelButton);
+    companionButtonLayout->addWidget(m_resetRobotPositionButton);
     companionButtonLayout->addStretch();
     companionLayout->addLayout(companionButtonLayout);
 
@@ -543,6 +575,44 @@ void MainWindow::buildUi()
     captionLanguageLayout->addWidget(m_captionTargetLanguageEdit);
     captionLayout->addLayout(captionLanguageLayout);
     settingsLayout->addWidget(captionGroup);
+
+    auto *captionPlacementGroup = new QGroupBox("Caption Placement", settingsPage);
+    auto *captionPlacementLayout = new QVBoxLayout(captionPlacementGroup);
+    auto *captionPlacementButtonLayout = new QHBoxLayout();
+    m_captionLockedCheckBox = new QCheckBox("Lock caption position", captionPlacementGroup);
+    m_resetCaptionPositionButton = new QPushButton("Reset Caption Position", captionPlacementGroup);
+    captionPlacementButtonLayout->addWidget(m_captionLockedCheckBox);
+    captionPlacementButtonLayout->addWidget(m_resetCaptionPositionButton);
+    captionPlacementButtonLayout->addStretch();
+    captionPlacementLayout->addLayout(captionPlacementButtonLayout);
+
+    auto *captionSizeLayout = new QHBoxLayout();
+    m_captionWidthSpinBox = new QSpinBox(captionPlacementGroup);
+    m_captionWidthSpinBox->setAccessibleName("Caption width");
+    m_captionWidthSpinBox->setRange(260, 1200);
+    m_captionWidthSpinBox->setSingleStep(20);
+    m_captionWidthSpinBox->setPrefix("Width: ");
+    m_captionHeightSpinBox = new QSpinBox(captionPlacementGroup);
+    m_captionHeightSpinBox->setAccessibleName("Caption height");
+    m_captionHeightSpinBox->setRange(80, 500);
+    m_captionHeightSpinBox->setSingleStep(10);
+    m_captionHeightSpinBox->setPrefix("Height: ");
+    m_captionFontSizeSpinBox = new QSpinBox(captionPlacementGroup);
+    m_captionFontSizeSpinBox->setAccessibleName("Caption font size");
+    m_captionFontSizeSpinBox->setRange(12, 48);
+    m_captionFontSizeSpinBox->setPrefix("Font: ");
+    m_captionOpacitySpinBox = new QDoubleSpinBox(captionPlacementGroup);
+    m_captionOpacitySpinBox->setAccessibleName("Caption opacity");
+    m_captionOpacitySpinBox->setRange(0.20, 1.00);
+    m_captionOpacitySpinBox->setSingleStep(0.05);
+    m_captionOpacitySpinBox->setPrefix("Opacity: ");
+    captionSizeLayout->addWidget(m_captionWidthSpinBox);
+    captionSizeLayout->addWidget(m_captionHeightSpinBox);
+    captionSizeLayout->addWidget(m_captionFontSizeSpinBox);
+    captionSizeLayout->addWidget(m_captionOpacitySpinBox);
+    captionSizeLayout->addStretch();
+    captionPlacementLayout->addLayout(captionSizeLayout);
+    settingsLayout->addWidget(captionPlacementGroup);
 
     settingsLayout->addStretch();
 
@@ -736,16 +806,16 @@ void MainWindow::connectSignals()
         runPullModelAsync(QString::fromUtf8(local_jarvis::ai::kFallbackGemmaModel));
     });
 
-    connect(m_showCompanionButton, &QPushButton::clicked, this, [this]() {
-        showCompanion();
+    connect(m_openAssistantPanelButton, &QPushButton::clicked, this, [this]() {
+        openAssistantPanel();
     });
 
-    connect(m_hideCompanionButton, &QPushButton::clicked, this, [this]() {
-        hideCompanion();
+    connect(m_closeAssistantPanelButton, &QPushButton::clicked, this, [this]() {
+        closeAssistantPanel();
     });
 
-    connect(m_resetCompanionPositionButton, &QPushButton::clicked, this, [this]() {
-        resetCompanionPosition();
+    connect(m_resetRobotPositionButton, &QPushButton::clicked, this, [this]() {
+        resetRobotPosition();
     });
 
     connect(m_companionScaleSlider, &QSlider::valueChanged, this, [this](int value) {
@@ -808,6 +878,35 @@ void MainWindow::connectSignals()
 
     connect(m_captionTargetLanguageEdit, &QLineEdit::editingFinished, this, [this]() {
         m_captionManager.setTargetLanguage(m_captionTargetLanguageEdit->text().trimmed().toStdString());
+        applyCompanionState();
+    });
+
+    connect(m_captionLockedCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_companionManager.setCaptionLocked(checked);
+        applyCompanionState();
+    });
+
+    connect(m_resetCaptionPositionButton, &QPushButton::clicked, this, [this]() {
+        resetCaptionPlacement();
+    });
+
+    connect(m_captionWidthSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+        m_companionManager.setCaptionWidth(value);
+        applyCompanionState();
+    });
+
+    connect(m_captionHeightSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+        m_companionManager.setCaptionHeight(value);
+        applyCompanionState();
+    });
+
+    connect(m_captionFontSizeSpinBox, &QSpinBox::valueChanged, this, [this](int value) {
+        m_companionManager.setCaptionFontSize(value);
+        applyCompanionState();
+    });
+
+    connect(m_captionOpacitySpinBox, qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double value) {
+        m_companionManager.setCaptionOpacity(value);
         applyCompanionState();
     });
 }
@@ -2192,6 +2291,7 @@ void MainWindow::initializeCompanion()
 
     m_companionManager.loadSettings();
     m_captionManager.loadSettings();
+    m_companionManager.setCompanionVisible(true);
     m_companionManager.setCaptionsVisible(m_captionManager.state().captionsEnabled
         && m_captionManager.state().captionMode != local_jarvis::caption::CaptionMode::Off);
     m_companionManager.setCaptionMaxLines(m_captionManager.state().maxLines);
@@ -2212,7 +2312,7 @@ void MainWindow::initializeCompanion()
     m_companionAnimationResetTimer.setSingleShot(true);
 
     m_companionWindow->setClickedCallback([this]() {
-        m_companionManager.setPanelVisible(true);
+        m_companionManager.setPanelVisible(!m_companionManager.state().panelVisible);
         setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
     });
     m_companionWindow->setMovedCallback([this](const QPoint &position) {
@@ -2223,6 +2323,10 @@ void MainWindow::initializeCompanion()
         m_companionManager.onCaptionUpdated();
         applyCompanionState();
         scheduleCompanionIdle();
+    });
+    m_captionBubbleWindow->setGeometryChangedCallback([this]() {
+        refreshCompanionSettings();
+        refreshCaptionSettings();
     });
     m_assistantPanelWindow->setCallbacks(
         [this]() {
@@ -2262,12 +2366,12 @@ void MainWindow::initializeCompanion()
 void MainWindow::applyCompanionState()
 {
     m_companionManager.syncAnimationState();
-    const auto &state = m_companionManager.state();
-    const QPoint anchor(state.anchorX, state.anchorY);
 
     if (m_companionWindow) {
         m_companionWindow->applyState();
     }
+    const auto &state = m_companionManager.state();
+    const QPoint anchor(state.anchorX, state.anchorY);
     if (m_captionBubbleWindow) {
         m_captionBubbleWindow->refreshCaptionText();
         m_captionBubbleWindow->applyState();
@@ -2296,12 +2400,15 @@ void MainWindow::refreshCompanionSettings()
     const auto &captionState = m_captionManager.state();
     const auto profile = m_companionManager.visualProfile();
     m_companionStatusLabel->setText(QString(
-        "Mode: %1\n"
-        "Captions: %2 (%3) | Translation: %4 | Mic: %5\n"
-        "Position: %6, %7 | Scale: %8%\n"
-        "Theme: %9 | Outfit: %10 | Accessory: %11\n"
-        "Animation: %12 | Motion: %13 | Always on top: %14")
-        .arg(QString::fromStdString(profile.displayName),
+        "Robot: Always visible | Assistant Panel: %1\n"
+        "Mode: %2\n"
+        "Captions: %3 (%4) | Translation: %5 | Mic: %6\n"
+        "Robot position: %7, %8 | Scale: %9%\n"
+        "Caption position: %10, %11 | Size: %12 x %13 | %14\n"
+        "Theme: %15 | Outfit: %16 | Accessory: %17\n"
+        "Animation: %18 | Motion: %19 | Always on top: %20")
+        .arg(state.panelVisible ? "Open" : "Closed",
+             QString::fromStdString(profile.displayName),
              enabledText(captionState.captionsEnabled && state.captionsVisible),
              QString::fromStdString(local_jarvis::caption::displayName(captionState.captionMode)),
              enabledText(state.translationEnabled),
@@ -2309,6 +2416,11 @@ void MainWindow::refreshCompanionSettings()
              QString::number(state.anchorX),
              QString::number(state.anchorY),
              QString::number(static_cast<int>(state.companionScale * 100.0)),
+             QString::number(state.captionX),
+             QString::number(state.captionY),
+             QString::number(state.captionWidth),
+             QString::number(state.captionHeight),
+             state.captionLocked ? "Caption locked" : "Caption unlocked",
              QString::fromStdString(state.themePack),
              QString::fromStdString(profile.outfitLabel),
              QString::fromStdString(profile.accessoryLabel),
@@ -2326,6 +2438,12 @@ void MainWindow::refreshCompanionSettings()
     m_companionAnimationCheckBox->setChecked(state.animationEnabled);
     m_companionIdleMotionCheckBox->setChecked(state.idleMotionEnabled);
     m_companionAlwaysOnTopCheckBox->setChecked(state.alwaysOnTop);
+    if (m_openAssistantPanelButton) {
+        m_openAssistantPanelButton->setEnabled(!state.panelVisible);
+    }
+    if (m_closeAssistantPanelButton) {
+        m_closeAssistantPanelButton->setEnabled(state.panelVisible);
+    }
 }
 
 void MainWindow::refreshCaptionSettings()
@@ -2335,12 +2453,18 @@ void MainWindow::refreshCaptionSettings()
     }
 
     const auto &state = m_captionManager.state();
+    const auto &companionState = m_companionManager.state();
     const QSignalBlocker modeBlocker(m_captionModeCombo);
     const QSignalBlocker speakerBlocker(m_captionShowSpeakerCheckBox);
     const QSignalBlocker linesBlocker(m_captionMaxLinesSpinBox);
     const QSignalBlocker charactersBlocker(m_captionMaxCharactersSpinBox);
     const QSignalBlocker sourceBlocker(m_captionSourceLanguageEdit);
     const QSignalBlocker targetBlocker(m_captionTargetLanguageEdit);
+    const QSignalBlocker lockBlocker(m_captionLockedCheckBox);
+    const QSignalBlocker widthBlocker(m_captionWidthSpinBox);
+    const QSignalBlocker heightBlocker(m_captionHeightSpinBox);
+    const QSignalBlocker fontSizeBlocker(m_captionFontSizeSpinBox);
+    const QSignalBlocker opacityBlocker(m_captionOpacitySpinBox);
 
     m_captionModeCombo->setCurrentIndex(captionModeIndex(state.captionMode));
     m_captionShowSpeakerCheckBox->setChecked(state.showSpeaker);
@@ -2348,6 +2472,11 @@ void MainWindow::refreshCaptionSettings()
     m_captionMaxCharactersSpinBox->setValue(state.maxCharacters);
     m_captionSourceLanguageEdit->setText(QString::fromStdString(state.sourceLanguage));
     m_captionTargetLanguageEdit->setText(QString::fromStdString(state.targetLanguage));
+    m_captionLockedCheckBox->setChecked(companionState.captionLocked);
+    m_captionWidthSpinBox->setValue(companionState.captionWidth);
+    m_captionHeightSpinBox->setValue(companionState.captionHeight);
+    m_captionFontSizeSpinBox->setValue(companionState.captionFontSize);
+    m_captionOpacitySpinBox->setValue(companionState.captionOpacity);
 }
 
 void MainWindow::setCompanionAnimation(local_jarvis::companion::AnimationState state)
@@ -2366,24 +2495,34 @@ void MainWindow::scheduleCompanionIdle()
     }
 }
 
-void MainWindow::showCompanion()
+void MainWindow::openAssistantPanel()
 {
     m_companionManager.setCompanionVisible(true);
+    m_companionManager.setPanelVisible(true);
     setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
 }
 
-void MainWindow::hideCompanion()
+void MainWindow::closeAssistantPanel()
 {
     m_companionManager.setPanelVisible(false);
-    m_companionManager.setCompanionVisible(false);
+    m_companionManager.setCompanionVisible(true);
     applyCompanionState();
 }
 
-void MainWindow::resetCompanionPosition()
+void MainWindow::resetRobotPosition()
 {
-    m_companionManager.resetAnchorPosition();
+    const QPoint position = safeRobotPosition(QSize(172, 212));
+    m_companionManager.setAnchorPosition(position.x(), position.y());
     m_companionManager.setCompanionVisible(true);
     setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
+}
+
+void MainWindow::resetCaptionPlacement()
+{
+    const QRect geometry = safeCaptionGeometry();
+    m_companionManager.setCaptionDetached(true);
+    m_companionManager.setCaptionGeometry(geometry.x(), geometry.y(), geometry.width(), geometry.height());
+    applyCompanionState();
 }
 
 void MainWindow::resetCompanionVisuals()

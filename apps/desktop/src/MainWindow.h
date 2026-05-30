@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -110,9 +111,10 @@ private:
     void refreshCaptionSettings();
     void setCompanionAnimation(local_jarvis::companion::AnimationState state);
     void scheduleCompanionIdle();
-    void showCompanion();
-    void hideCompanion();
-    void resetCompanionPosition();
+    void openAssistantPanel();
+    void closeAssistantPanel();
+    void resetRobotPosition();
+    void resetCaptionPlacement();
     void resetCompanionVisuals();
     void refreshProcessedOutputs();
     void appendLifecycleEvent(const QString &message);
@@ -177,9 +179,9 @@ private:
     QPushButton *m_pullFallbackButton = nullptr;
     QTextEdit *m_deleteModelInstructions = nullptr;
     QLabel *m_companionStatusLabel = nullptr;
-    QPushButton *m_showCompanionButton = nullptr;
-    QPushButton *m_hideCompanionButton = nullptr;
-    QPushButton *m_resetCompanionPositionButton = nullptr;
+    QPushButton *m_openAssistantPanelButton = nullptr;
+    QPushButton *m_closeAssistantPanelButton = nullptr;
+    QPushButton *m_resetRobotPositionButton = nullptr;
     QLabel *m_companionScaleLabel = nullptr;
     QSlider *m_companionScaleSlider = nullptr;
     QCheckBox *m_companionAnimationCheckBox = nullptr;
@@ -192,6 +194,12 @@ private:
     QSpinBox *m_captionMaxCharactersSpinBox = nullptr;
     QLineEdit *m_captionSourceLanguageEdit = nullptr;
     QLineEdit *m_captionTargetLanguageEdit = nullptr;
+    QCheckBox *m_captionLockedCheckBox = nullptr;
+    QPushButton *m_resetCaptionPositionButton = nullptr;
+    QSpinBox *m_captionWidthSpinBox = nullptr;
+    QSpinBox *m_captionHeightSpinBox = nullptr;
+    QSpinBox *m_captionFontSizeSpinBox = nullptr;
+    QDoubleSpinBox *m_captionOpacitySpinBox = nullptr;
 
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;

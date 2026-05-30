@@ -28,6 +28,7 @@ public:
 
     void setCompanionVisible(bool visible);
     void setPanelVisible(bool visible);
+    void setPanelDefaultOpen(bool defaultOpen);
     void setCaptionsVisible(bool visible);
     void setMode(CompanionMode mode);
     void setMicrophoneEnabled(bool enabled);
@@ -37,6 +38,13 @@ public:
     void setCaptionOpacity(double opacity);
     void setCaptionMaxLines(int maxLines);
     void setCaptionWidth(int width);
+    void setCaptionHeight(int height);
+    void setCaptionPosition(int x, int y);
+    void setCaptionSize(int width, int height);
+    void setCaptionGeometry(int x, int y, int width, int height);
+    void resetCaptionGeometry();
+    void setCaptionDetached(bool detached);
+    void setCaptionLocked(bool locked);
     void setAnchorPosition(int x, int y);
     void resetAnchorPosition();
     void setCompanionLocked(bool locked);

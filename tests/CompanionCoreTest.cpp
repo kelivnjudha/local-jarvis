@@ -28,7 +28,8 @@ bool testDefaultState()
 
     CompanionState state;
     return expect(state.companionVisible, "Companion should default visible.")
-        && expect(!state.panelVisible, "Panel should default hidden.")
+        && expect(state.panelVisible, "Panel should default open.")
+        && expect(state.panelDefaultOpen, "Panel default-open flag should default true.")
         && expect(state.captionsVisible, "Captions should default visible.")
         && expect(state.currentMode == CompanionMode::Study, "Mode should default to Study.")
         && expect(!state.microphoneEnabled, "Microphone placeholder should default disabled.")
@@ -39,6 +40,10 @@ bool testDefaultState()
         && expect(state.captionOpacity == 0.85, "Caption opacity default changed.")
         && expect(state.captionMaxLines == 2, "Caption max lines default changed.")
         && expect(state.captionWidth == 520, "Caption width default changed.")
+        && expect(state.captionHeight == 140, "Caption height default changed.")
+        && expect(state.captionX == 680 && state.captionY == 520, "Caption position default changed.")
+        && expect(state.captionDetached, "Caption should default detached.")
+        && expect(!state.captionLocked, "Caption should default unlocked.")
         && expect(state.anchorX == 1200 && state.anchorY == 700, "Anchor default changed.")
         && expect(!state.companionLocked, "Companion should default unlocked.")
         && expect(state.companionScale == 1.0, "Companion scale default changed.")
@@ -176,14 +181,27 @@ bool testSettingsRoundTrip()
     if (!expect(storage.getSetting("companion.mode").value_or("") == "Study", "Default mode should persist.")) {
         return false;
     }
+    if (!expect(manager.state().panelVisible, "Panel should load open by default.")) {
+        return false;
+    }
 
+    manager.setCompanionVisible(false);
+    if (!expect(manager.state().companionVisible, "Companion manager should not hide the robot.")) {
+        return false;
+    }
     manager.setMode(CompanionMode::Meeting);
+    manager.setPanelVisible(false);
+    manager.setPanelDefaultOpen(true);
     manager.setCaptionsVisible(false);
     manager.setTranslationEnabled(false);
     manager.setCaptionFontSize(30);
     manager.setCaptionOpacity(0.5);
     manager.setCaptionMaxLines(3);
     manager.setCaptionWidth(640);
+    manager.setCaptionHeight(180);
+    manager.setCaptionPosition(111, 222);
+    manager.setCaptionDetached(true);
+    manager.setCaptionLocked(true);
     manager.setAnchorPosition(321, 654);
     manager.setCompanionLocked(true);
     manager.setCompanionScale(1.25);
@@ -198,13 +216,20 @@ bool testSettingsRoundTrip()
         return false;
     }
     const auto &state = reloaded.state();
-    const bool ok = expect(state.currentMode == CompanionMode::Meeting, "Mode did not persist.")
+    const bool ok = expect(state.companionVisible, "Companion visibility should stay true after reload.")
+        && expect(state.panelVisible, "Panel should reopen on load when default-open is enabled.")
+        && expect(state.panelDefaultOpen, "Panel default-open flag did not persist.")
+        && expect(state.currentMode == CompanionMode::Meeting, "Mode did not persist.")
         && expect(!state.captionsVisible, "Captions visibility did not persist.")
         && expect(!state.translationEnabled, "Translation flag did not persist.")
         && expect(state.captionFontSize == 30, "Caption font size did not persist.")
         && expect(state.captionOpacity == 0.5, "Caption opacity did not persist.")
         && expect(state.captionMaxLines == 3, "Caption max lines did not persist.")
         && expect(state.captionWidth == 640, "Caption width did not persist.")
+        && expect(state.captionHeight == 180, "Caption height did not persist.")
+        && expect(state.captionX == 111 && state.captionY == 222, "Caption position did not persist.")
+        && expect(state.captionDetached, "Caption detached state did not persist.")
+        && expect(state.captionLocked, "Caption locked state did not persist.")
         && expect(state.anchorX == 321 && state.anchorY == 654, "Anchor position did not persist.")
         && expect(state.companionLocked, "Locked state did not persist.")
         && expect(state.companionScale == 1.25, "Companion scale did not persist.")
