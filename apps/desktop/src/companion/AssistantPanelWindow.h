@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QWidget>
 
+#include <cstdint>
 #include <functional>
 
 class AssistantPanelWindow final : public QWidget {
@@ -36,6 +37,7 @@ private:
     void connectSignals();
     void emitPanelAction();
     void applyWindowFlags(bool visible);
+    void setPanelVisible(bool visible);
     [[nodiscard]] local_jarvis::companion::CompanionMode selectedMode() const;
     [[nodiscard]] local_jarvis::caption::CaptionMode selectedCaptionMode() const;
     [[nodiscard]] int captionModeIndex(local_jarvis::caption::CaptionMode mode) const;
@@ -64,4 +66,9 @@ private:
     std::function<void(bool)> m_asrToggleCallback;
     bool m_asrEnabled = false;
     QString m_asrStatusText = "Disabled";
+    QString m_lastStyleSheet;
+    std::uint64_t m_applyStateCount = 0;
+    std::uint64_t m_showCallCount = 0;
+    std::uint64_t m_hideCallCount = 0;
+    std::uint64_t m_moveCallCount = 0;
 };

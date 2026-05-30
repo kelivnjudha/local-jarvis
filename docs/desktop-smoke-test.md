@@ -34,6 +34,8 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the compact assistant panel collapses/closes while the companion remains visible.
 - Click the companion again.
 - Confirm the compact assistant panel opens near the companion.
+- Leave the app idle for at least 10 seconds.
+- Confirm the assistant panel remains stable without visible flicker, repeated repositioning, or focus stealing.
 - Confirm the companion briefly switches to the salute animation state.
 - Change the mode in the panel.
 - Confirm the mode label and Settings status update.
@@ -68,6 +70,8 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Settings status updates.
 - Drag the companion while it is unlocked.
 - Confirm the companion can move anywhere on the visible desktop area and the position persists after restart.
+- Confirm dragging the companion does not toggle the assistant panel.
+- Confirm the assistant panel repositions only after the companion drag ends or when the panel is reopened.
 - Use Settings > Close Assistant Panel.
 - Confirm the assistant panel closes and the companion remains visible.
 - Use Settings > Open Assistant Panel.
@@ -78,12 +82,15 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the caption bubble position persists after restart.
 - Resize the caption bubble with the corner handle.
 - Confirm caption text reflows and the caption size persists after restart.
+- Confirm dragging or resizing the caption bubble does not flicker, hide, show, or reposition the assistant panel.
 - Use Settings > Lock caption position.
 - Confirm caption dragging/resizing is disabled until unlocked again.
 - Use Settings > Reset Caption Position.
 - Confirm caption position and size return to a safe default.
 - Use Settings > Reset Visual Profile / Theme.
 - Confirm scale, animation, idle motion, and always-on-top return to defaults.
+- Change a companion or caption setting.
+- Confirm settings changes update the visible UI without assistant panel flicker.
 
 ## Model Readiness States
 

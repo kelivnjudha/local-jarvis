@@ -27,7 +27,10 @@ public:
     [[nodiscard]] CompanionAssetRegistry assetRegistry() const;
 
     void setCompanionVisible(bool visible);
-    void setPanelVisible(bool visible);
+    bool setPanelVisible(bool visible);
+    bool showPanel();
+    bool hidePanel();
+    bool togglePanelVisible();
     void setPanelDefaultOpen(bool defaultOpen);
     void setCaptionsVisible(bool visible);
     void setMode(CompanionMode mode);

@@ -54,6 +54,7 @@ private:
     QPoint m_companionTopLeft;
     std::function<void()> m_captionUpdatedCallback;
     std::function<void()> m_geometryChangedCallback;
+    QString m_lastLabelStyleSheet;
     bool m_dragging = false;
     bool m_resizing = false;
     bool m_movedDuringDrag = false;

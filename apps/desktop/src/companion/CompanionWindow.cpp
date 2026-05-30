@@ -12,6 +12,7 @@ namespace {
 constexpr int kBaseWindowWidth = 172;
 constexpr int kBaseWindowHeight = 212;
 constexpr int kMinimumVisiblePixels = 48;
+constexpr int kDragClickThreshold = 6;
 
 QRect availableDesktopGeometry()
 {
@@ -63,7 +64,10 @@ void CompanionWindow::applyState()
     if (!m_dragging) {
         const int scaledWidth = static_cast<int>(kBaseWindowWidth * state.companionScale);
         const int scaledHeight = static_cast<int>(kBaseWindowHeight * state.companionScale);
-        setFixedSize(scaledWidth, scaledHeight);
+        const QSize scaledSize(scaledWidth, scaledHeight);
+        if (size() != scaledSize) {
+            setFixedSize(scaledSize);
+        }
     }
     if (state.animationEnabled) {
         const auto metadata = local_jarvis::companion::metadataForAnimation(state.currentAnimationState);
@@ -216,7 +220,7 @@ void CompanionWindow::mouseMoveEvent(QMouseEvent *event)
     }
 
     const QPoint globalPosition = event->globalPosition().toPoint();
-    if ((globalPosition - m_dragStartGlobal).manhattanLength() > 4) {
+    if ((globalPosition - m_dragStartGlobal).manhattanLength() > kDragClickThreshold) {
         m_movedDuringDrag = true;
     }
     move(globalPosition - m_dragWindowOffset);
@@ -230,6 +234,9 @@ void CompanionWindow::mouseReleaseEvent(QMouseEvent *event)
     }
 
     m_dragging = false;
+    if ((event->globalPosition().toPoint() - m_dragStartGlobal).manhattanLength() > kDragClickThreshold) {
+        m_movedDuringDrag = true;
+    }
     if (m_movedDuringDrag) {
         if (m_movedCallback) {
             m_movedCallback(pos());
@@ -249,7 +256,9 @@ void CompanionWindow::applyWindowFlags(bool visible)
     if (windowFlags() != flags) {
         setWindowFlags(flags);
     }
-    setVisible(visible);
+    if (isVisible() != visible) {
+        setVisible(visible);
+    }
 }
 
 QColor CompanionWindow::toQColor(const local_jarvis::companion::CompanionColor &color) const

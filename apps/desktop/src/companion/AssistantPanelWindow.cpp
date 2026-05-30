@@ -49,6 +49,7 @@ AssistantPanelWindow::AssistantPanelWindow(
 
 void AssistantPanelWindow::applyState()
 {
+    ++m_applyStateCount;
     const auto &state = m_companionManager.state();
     const auto &captionState = m_captionManager.state();
     const auto profile = m_companionManager.visualProfile();
@@ -59,27 +60,54 @@ void AssistantPanelWindow::applyState()
     const QSignalBlocker translationBlocker(m_translationCheck);
     const QSignalBlocker microphoneBlocker(m_microphoneCheck);
     const QSignalBlocker asrBlocker(m_asrCheck);
-    m_modeCombo->setCurrentIndex(static_cast<int>(state.currentMode));
-    m_captionModeCombo->setCurrentIndex(captionModeIndex(captionState.captionMode));
-    m_captionsCheck->setChecked(state.captionsVisible && captionState.captionsEnabled);
-    m_showSpeakerCheck->setChecked(captionState.showSpeaker);
-    m_translationCheck->setChecked(state.translationEnabled);
-    m_microphoneCheck->setChecked(state.microphoneEnabled);
-    m_asrCheck->setChecked(m_asrEnabled);
-    m_languageLabel->setText(QString("Source: Auto | Target: English"));
-    m_statusLabel->setText(QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4\nASR: %5")
+    const int modeIndex = static_cast<int>(state.currentMode);
+    if (m_modeCombo->currentIndex() != modeIndex) {
+        m_modeCombo->setCurrentIndex(modeIndex);
+    }
+    const int captionMode = captionModeIndex(captionState.captionMode);
+    if (m_captionModeCombo->currentIndex() != captionMode) {
+        m_captionModeCombo->setCurrentIndex(captionMode);
+    }
+    const bool captionsChecked = state.captionsVisible && captionState.captionsEnabled;
+    if (m_captionsCheck->isChecked() != captionsChecked) {
+        m_captionsCheck->setChecked(captionsChecked);
+    }
+    if (m_showSpeakerCheck->isChecked() != captionState.showSpeaker) {
+        m_showSpeakerCheck->setChecked(captionState.showSpeaker);
+    }
+    if (m_translationCheck->isChecked() != state.translationEnabled) {
+        m_translationCheck->setChecked(state.translationEnabled);
+    }
+    if (m_microphoneCheck->isChecked() != state.microphoneEnabled) {
+        m_microphoneCheck->setChecked(state.microphoneEnabled);
+    }
+    if (m_asrCheck->isChecked() != m_asrEnabled) {
+        m_asrCheck->setChecked(m_asrEnabled);
+    }
+    const QString languageText("Source: Auto | Target: English");
+    if (m_languageLabel->text() != languageText) {
+        m_languageLabel->setText(languageText);
+    }
+    const QString statusText = QString("Mode: %1 | Animation: %2\nOutfit: %3 | Accessory: %4\nASR: %5")
         .arg(QString::fromStdString(profile.displayName),
              QString::fromUtf8(local_jarvis::companion::displayLabelForAnimation(state.currentAnimationState)),
              QString::fromStdString(profile.outfitLabel),
              QString::fromStdString(profile.accessoryLabel),
-             m_asrStatusText));
-    setStyleSheet(QString(
+             m_asrStatusText);
+    if (m_statusLabel->text() != statusText) {
+        m_statusLabel->setText(statusText);
+    }
+    const QString styleSheet = QString(
         "QWidget { background: #f8fafc; color: #17202c; }"
         "QPushButton { min-height: 24px; }"
         "QComboBox { min-height: 24px; }"
         "QCheckBox { min-height: 22px; }"
         "QLabel { border-left: 4px solid %1; padding-left: 8px; }")
-            .arg(QString::fromStdString(local_jarvis::companion::colorToHex(profile.primaryColor))));
+            .arg(QString::fromStdString(local_jarvis::companion::colorToHex(profile.primaryColor)));
+    if (m_lastStyleSheet != styleSheet) {
+        m_lastStyleSheet = styleSheet;
+        setStyleSheet(styleSheet);
+    }
     applyWindowFlags(state.companionVisible && state.panelVisible);
 }
 
@@ -91,12 +119,20 @@ void AssistantPanelWindow::setAsrState(bool enabled, const QString &statusText)
 
 void AssistantPanelWindow::setAnchorPosition(const QPoint &companionTopLeft)
 {
+    if (!isVisible()) {
+        return;
+    }
     QPoint candidate = companionTopLeft + QPoint(-width() - kPanelMargin, 0);
     const QRect desktop = availableDesktopGeometry();
     if (candidate.x() < desktop.left() + kPanelMargin) {
         candidate = companionTopLeft + QPoint(kPanelCompanionOffset, 0);
     }
-    move(clampPanelTopLeft(candidate, size()));
+    const QPoint target = clampPanelTopLeft(candidate, size());
+    if (pos() == target) {
+        return;
+    }
+    ++m_moveCallCount;
+    move(target);
 }
 
 void AssistantPanelWindow::setCallbacks(
@@ -289,10 +325,28 @@ void AssistantPanelWindow::applyWindowFlags(bool visible)
     if (m_companionManager.state().alwaysOnTop) {
         flags |= Qt::WindowStaysOnTopHint;
     }
+    const bool wasVisible = isVisible();
     if (windowFlags() != flags) {
         setWindowFlags(flags);
+        setPanelVisible(visible);
+        return;
     }
-    setVisible(visible);
+    if (wasVisible != visible) {
+        setPanelVisible(visible);
+    }
+}
+
+void AssistantPanelWindow::setPanelVisible(bool visible)
+{
+    if (isVisible() == visible) {
+        return;
+    }
+    if (visible) {
+        ++m_showCallCount;
+    } else {
+        ++m_hideCallCount;
+    }
+    QWidget::setVisible(visible);
 }
 
 local_jarvis::companion::CompanionMode AssistantPanelWindow::selectedMode() const

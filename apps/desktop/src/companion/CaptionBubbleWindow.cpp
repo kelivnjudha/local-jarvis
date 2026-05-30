@@ -76,16 +76,25 @@ void CaptionBubbleWindow::applyState()
         const QSize requestedSize(
             qBound(kCaptionMinimumWidth, state.captionWidth, kCaptionMaximumWidth),
             qBound(kCaptionMinimumHeight, state.captionHeight, kCaptionMaximumHeight));
-        resize(requestedSize);
+        if (size() != requestedSize) {
+            resize(requestedSize);
+        }
     }
     if (m_captionLabel) {
-        m_captionLabel->setGeometry(rect().adjusted(20, 34, -20, -18));
+        const QRect labelGeometry = rect().adjusted(20, 34, -20, -18);
+        if (m_captionLabel->geometry() != labelGeometry) {
+            m_captionLabel->setGeometry(labelGeometry);
+        }
     }
     updateCaptionLabelStyle();
-    setWindowOpacity(state.captionOpacity);
+    if (!qFuzzyCompare(windowOpacity(), state.captionOpacity)) {
+        setWindowOpacity(state.captionOpacity);
+    }
     if (state.captionDetached && !m_dragging && !m_resizing) {
         const QPoint clampedPosition = clampTopLeftToDesktop(QPoint(state.captionX, state.captionY), size());
-        move(clampedPosition);
+        if (pos() != clampedPosition) {
+            move(clampedPosition);
+        }
         if (clampedPosition.x() != state.captionX || clampedPosition.y() != state.captionY) {
             m_companionManager.setCaptionPosition(clampedPosition.x(), clampedPosition.y());
         }
@@ -105,7 +114,10 @@ void CaptionBubbleWindow::setAnchorPosition(const QPoint &companionTopLeft)
     m_companionTopLeft = companionTopLeft;
     const int companionWidth = static_cast<int>(172 * m_companionManager.state().companionScale);
     const QPoint requested = m_companionTopLeft + QPoint(-qMax(0, width() - companionWidth), -height() - 12);
-    move(clampTopLeftToDesktop(requested, size()));
+    const QPoint target = clampTopLeftToDesktop(requested, size());
+    if (pos() != target) {
+        move(target);
+    }
 }
 
 void CaptionBubbleWindow::setCaptionUpdatedCallback(std::function<void()> callback)
@@ -301,7 +313,9 @@ void CaptionBubbleWindow::applyWindowFlags(bool visible)
     if (windowFlags() != flags) {
         setWindowFlags(flags);
     }
-    setVisible(visible);
+    if (isVisible() != visible) {
+        setVisible(visible);
+    }
 }
 
 void CaptionBubbleWindow::updateCaptionLabelStyle()
@@ -322,9 +336,13 @@ void CaptionBubbleWindow::updateCaptionLabelStyle()
         foreground = QColor(39, 34, 54);
     }
 
-    m_captionLabel->setStyleSheet(QString("background: transparent; color: %1; font-size: %2pt; font-weight: 700;")
+    const QString styleSheet = QString("background: transparent; color: %1; font-size: %2pt; font-weight: 700;")
         .arg(foreground.name(QColor::HexRgb),
-             QString::number(m_companionManager.state().captionFontSize)));
+             QString::number(m_companionManager.state().captionFontSize));
+    if (m_lastLabelStyleSheet != styleSheet) {
+        m_lastLabelStyleSheet = styleSheet;
+        m_captionLabel->setStyleSheet(styleSheet);
+    }
 }
 
 QRect CaptionBubbleWindow::resizeHandleRect() const

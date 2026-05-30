@@ -2312,12 +2312,13 @@ void MainWindow::initializeCompanion()
     m_companionAnimationResetTimer.setSingleShot(true);
 
     m_companionWindow->setClickedCallback([this]() {
-        m_companionManager.setPanelVisible(!m_companionManager.state().panelVisible);
+        toggleAssistantPanel();
         setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
     });
     m_companionWindow->setMovedCallback([this](const QPoint &position) {
         m_companionManager.setAnchorPosition(position.x(), position.y());
         setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
+        positionAssistantPanelNearRobot();
     });
     m_captionBubbleWindow->setCaptionUpdatedCallback([this]() {
         m_companionManager.onCaptionUpdated();
@@ -2360,10 +2361,10 @@ void MainWindow::initializeCompanion()
             setAsrEnabled(enabled);
         });
 
-    applyCompanionState();
+    applyCompanionState(true);
 }
 
-void MainWindow::applyCompanionState()
+void MainWindow::applyCompanionState(bool repositionPanel)
 {
     m_companionManager.syncAnimationState();
 
@@ -2383,7 +2384,9 @@ void MainWindow::applyCompanionState()
             QString("%1 (%2)")
                 .arg(asrStatusText(), asrBackendText()));
         m_assistantPanelWindow->applyState();
-        m_assistantPanelWindow->setAnchorPosition(anchor);
+        if (repositionPanel) {
+            m_assistantPanelWindow->setAnchorPosition(anchor);
+        }
     }
 
     refreshCompanionSettings();
@@ -2495,16 +2498,32 @@ void MainWindow::scheduleCompanionIdle()
     }
 }
 
+void MainWindow::toggleAssistantPanel()
+{
+    const bool panelVisible = m_companionManager.togglePanelVisible();
+    applyCompanionState(panelVisible);
+}
+
+void MainWindow::positionAssistantPanelNearRobot()
+{
+    if (!m_assistantPanelWindow || !m_companionManager.state().panelVisible) {
+        return;
+    }
+    const auto &state = m_companionManager.state();
+    m_assistantPanelWindow->setAnchorPosition(QPoint(state.anchorX, state.anchorY));
+}
+
 void MainWindow::openAssistantPanel()
 {
     m_companionManager.setCompanionVisible(true);
-    m_companionManager.setPanelVisible(true);
+    m_companionManager.showPanel();
     setCompanionAnimation(local_jarvis::companion::AnimationState::Salute);
+    positionAssistantPanelNearRobot();
 }
 
 void MainWindow::closeAssistantPanel()
 {
-    m_companionManager.setPanelVisible(false);
+    m_companionManager.hidePanel();
     m_companionManager.setCompanionVisible(true);
     applyCompanionState();
 }
@@ -2515,6 +2534,7 @@ void MainWindow::resetRobotPosition()
     m_companionManager.setAnchorPosition(position.x(), position.y());
     m_companionManager.setCompanionVisible(true);
     setCompanionAnimation(local_jarvis::companion::AnimationState::Walking);
+    positionAssistantPanelNearRobot();
 }
 
 void MainWindow::resetCaptionPlacement()

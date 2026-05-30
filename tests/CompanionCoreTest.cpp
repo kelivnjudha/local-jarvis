@@ -244,6 +244,42 @@ bool testSettingsRoundTrip()
     return ok;
 }
 
+bool testPanelVisibilityIsIdempotent()
+{
+    using local_jarvis::companion::CompanionManager;
+    using local_jarvis::storage::Storage;
+
+    const auto dbPath = std::filesystem::temp_directory_path() / "local-jarvis-companion-panel-test.sqlite";
+    std::filesystem::remove(dbPath);
+
+    Storage storage;
+    if (!storage.initialize(dbPath)) {
+        std::cerr << "Failed to initialize storage: " << storage.lastError() << '\n';
+        return false;
+    }
+
+    CompanionManager manager(storage);
+    if (!expect(manager.loadSettings(), "Companion settings should load for panel idempotence test.")) {
+        return false;
+    }
+
+    const bool ok = expect(manager.state().panelVisible, "Panel should begin visible.")
+        && expect(!manager.showPanel(), "Repeated showPanel should be a no-op.")
+        && expect(manager.hidePanel(), "First hidePanel should change state.")
+        && expect(!manager.state().panelVisible, "Panel should be hidden after hidePanel.")
+        && expect(!manager.hidePanel(), "Repeated hidePanel should be a no-op.")
+        && expect(manager.showPanel(), "showPanel should change hidden panel to visible.")
+        && expect(manager.state().panelVisible, "Panel should be visible after showPanel.")
+        && expect(!manager.togglePanelVisible(), "Toggle should hide a visible panel.")
+        && expect(!manager.state().panelVisible, "Panel should be hidden after visible toggle.")
+        && expect(manager.togglePanelVisible(), "Toggle should show a hidden panel.")
+        && expect(manager.state().panelVisible, "Panel should be visible after hidden toggle.");
+
+    storage.close();
+    std::filesystem::remove(dbPath);
+    return ok;
+}
+
 } // namespace
 
 int main()
@@ -252,6 +288,7 @@ int main()
         && testAnimationStateMachine()
         && testAnimationPriorityAndFallback()
         && testVisualProfilesAndAssets()
-        && testSettingsRoundTrip();
+        && testSettingsRoundTrip()
+        && testPanelVisibilityIsIdempotent();
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

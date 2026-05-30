@@ -262,10 +262,30 @@ void CompanionManager::setCompanionVisible(bool visible)
     saveBool(kCompanionVisible, true);
 }
 
-void CompanionManager::setPanelVisible(bool visible)
+bool CompanionManager::setPanelVisible(bool visible)
 {
+    if (m_state.panelVisible == visible) {
+        return false;
+    }
     m_state.panelVisible = visible;
     saveBool(kPanelVisible, visible);
+    return true;
+}
+
+bool CompanionManager::showPanel()
+{
+    return setPanelVisible(true);
+}
+
+bool CompanionManager::hidePanel()
+{
+    return setPanelVisible(false);
+}
+
+bool CompanionManager::togglePanelVisible()
+{
+    setPanelVisible(!m_state.panelVisible);
+    return m_state.panelVisible;
 }
 
 void CompanionManager::setPanelDefaultOpen(bool defaultOpen)

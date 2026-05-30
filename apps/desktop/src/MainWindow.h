@@ -106,11 +106,13 @@ private:
     void updateSetupStatus(const local_jarvis::setup::SetupStatus &status);
     void refreshSettings();
     void initializeCompanion();
-    void applyCompanionState();
+    void applyCompanionState(bool repositionPanel = false);
     void refreshCompanionSettings();
     void refreshCaptionSettings();
     void setCompanionAnimation(local_jarvis::companion::AnimationState state);
     void scheduleCompanionIdle();
+    void toggleAssistantPanel();
+    void positionAssistantPanelNearRobot();
     void openAssistantPanel();
     void closeAssistantPanel();
     void resetRobotPosition();
