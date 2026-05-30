@@ -3,6 +3,7 @@
 #include "storage/Storage.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <string>
 
@@ -16,6 +17,10 @@ constexpr const char *kMaxLines = "caption.max_lines";
 constexpr const char *kMaxCharacters = "caption.max_characters";
 constexpr const char *kSourceLanguage = "caption.source_language";
 constexpr const char *kTargetLanguage = "caption.target_language";
+constexpr const char *kHoldMs = "caption.hold_ms";
+constexpr const char *kSuppressDuplicates = "caption.suppress_duplicates";
+constexpr const char *kDuplicateWindowMs = "caption.duplicate_window_ms";
+constexpr const char *kClearOnAsrOff = "caption.clear_on_asr_off";
 
 std::string boolText(bool value)
 {
@@ -45,6 +50,20 @@ std::string nowText()
     return std::to_string(millis);
 }
 
+std::string trimAscii(std::string value)
+{
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char character) {
+        return std::isspace(character) != 0;
+    });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char character) {
+        return std::isspace(character) != 0;
+    }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
 } // namespace
 
 CaptionManager::CaptionManager(storage::Storage *storage)
@@ -64,7 +83,34 @@ const CaptionState &CaptionManager::state() const
 
 std::string CaptionManager::currentDisplayText() const
 {
-    return m_formatter.format(m_state);
+    const std::string formatted = m_formatter.format(m_state);
+    const auto now = std::chrono::steady_clock::now();
+    if (!formatted.empty()) {
+        if (formatted != m_lastDisplayText) {
+            m_lastDisplayText = formatted;
+        }
+        m_lastUsefulDisplayAt = now;
+        return formatted;
+    }
+
+    if (!m_state.captionsEnabled || m_state.captionMode == CaptionMode::Off) {
+        return {};
+    }
+
+    if (m_state.clearOnAsrOff || m_lastDisplayText.empty() || m_state.holdMs <= 0) {
+        return {};
+    }
+
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUsefulDisplayAt).count();
+    if (elapsedMs <= m_state.holdMs) {
+        return m_lastDisplayText;
+    }
+    return {};
+}
+
+std::size_t CaptionManager::duplicateSuppressedCount() const
+{
+    return m_duplicateSuppressedCount;
 }
 
 bool CaptionManager::loadSettings()
@@ -81,6 +127,10 @@ bool CaptionManager::loadSettings()
     m_state.maxCharacters = clampInt(settingInt(kMaxCharacters, defaults.maxCharacters), 40, 1000);
     m_state.sourceLanguage = settingString(kSourceLanguage, defaults.sourceLanguage);
     m_state.targetLanguage = settingString(kTargetLanguage, defaults.targetLanguage);
+    m_state.holdMs = clampInt(settingInt(kHoldMs, defaults.holdMs), 0, 30000);
+    m_state.suppressDuplicates = settingBool(kSuppressDuplicates, defaults.suppressDuplicates);
+    m_state.duplicateWindowMs = clampInt(settingInt(kDuplicateWindowMs, defaults.duplicateWindowMs), 0, 60000);
+    m_state.clearOnAsrOff = settingBool(kClearOnAsrOff, defaults.clearOnAsrOff);
     if (m_state.sourceLanguage.empty()) {
         m_state.sourceLanguage = defaults.sourceLanguage;
     }
@@ -103,6 +153,10 @@ bool CaptionManager::saveSettings()
     saveInt(kMaxCharacters, m_state.maxCharacters);
     saveString(kSourceLanguage, m_state.sourceLanguage);
     saveString(kTargetLanguage, m_state.targetLanguage);
+    saveInt(kHoldMs, m_state.holdMs);
+    saveBool(kSuppressDuplicates, m_state.suppressDuplicates);
+    saveInt(kDuplicateWindowMs, m_state.duplicateWindowMs);
+    saveBool(kClearOnAsrOff, m_state.clearOnAsrOff);
     return true;
 }
 
@@ -155,10 +209,55 @@ void CaptionManager::setMaxCharacters(int maxCharacters)
     touchUpdatedAt();
 }
 
+void CaptionManager::setHoldMs(int holdMs)
+{
+    m_state.holdMs = clampInt(holdMs, 0, 30000);
+    saveInt(kHoldMs, m_state.holdMs);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setSuppressDuplicates(bool enabled)
+{
+    m_state.suppressDuplicates = enabled;
+    saveBool(kSuppressDuplicates, enabled);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setDuplicateWindowMs(int duplicateWindowMs)
+{
+    m_state.duplicateWindowMs = clampInt(duplicateWindowMs, 0, 60000);
+    saveInt(kDuplicateWindowMs, m_state.duplicateWindowMs);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setClearOnAsrOff(bool enabled)
+{
+    m_state.clearOnAsrOff = enabled;
+    saveBool(kClearOnAsrOff, enabled);
+    touchUpdatedAt();
+}
+
 void CaptionManager::addSegment(const CaptionSegment &segment)
 {
+    if (shouldSuppressDuplicate(segment)) {
+        ++m_duplicateSuppressedCount;
+        touchUpdatedAt();
+        return;
+    }
+
+    const std::string textKey = segmentTextKey(segment);
+    if (!textKey.empty()) {
+        m_lastAcceptedSegmentText = textKey;
+        m_lastAcceptedSegmentAt = std::chrono::steady_clock::now();
+    }
     m_state.latestSegments.push_back(segment);
     trimLatestSegments();
+    touchUpdatedAt();
+}
+
+void CaptionManager::clearSegments()
+{
+    m_state.latestSegments.clear();
     touchUpdatedAt();
 }
 
@@ -234,6 +333,33 @@ void CaptionManager::trimLatestSegments()
     }
     const auto removeCount = m_state.latestSegments.size() - m_maxStoredSegments;
     m_state.latestSegments.erase(m_state.latestSegments.begin(), m_state.latestSegments.begin() + static_cast<std::ptrdiff_t>(removeCount));
+}
+
+bool CaptionManager::shouldSuppressDuplicate(const CaptionSegment &segment)
+{
+    if (!m_state.suppressDuplicates || m_state.duplicateWindowMs <= 0) {
+        return false;
+    }
+
+    const std::string textKey = segmentTextKey(segment);
+    if (textKey.empty() || textKey != m_lastAcceptedSegmentText || m_lastAcceptedSegmentAt == std::chrono::steady_clock::time_point {}) {
+        return false;
+    }
+
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - m_lastAcceptedSegmentAt).count();
+    return elapsedMs <= m_state.duplicateWindowMs;
+}
+
+std::string CaptionManager::segmentTextKey(const CaptionSegment &segment) const
+{
+    if (!segment.originalText.empty()) {
+        return trimAscii(segment.originalText);
+    }
+    if (!segment.translatedText.empty()) {
+        return trimAscii(segment.translatedText);
+    }
+    return trimAscii(segment.summaryText);
 }
 
 } // namespace local_jarvis::caption

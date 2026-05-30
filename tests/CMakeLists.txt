@@ -58,6 +58,18 @@ target_link_libraries(local_jarvis_audio_test
 add_test(NAME local_jarvis_audio_test COMMAND local_jarvis_audio_test)
 local_jarvis_copy_whisper_runtime(local_jarvis_audio_test)
 
+add_executable(local_jarvis_audio_detection_test
+    AudioDetectionTest.cpp
+)
+
+target_link_libraries(local_jarvis_audio_detection_test
+    PRIVATE
+        local_jarvis_core
+)
+
+add_test(NAME local_jarvis_audio_detection_test COMMAND local_jarvis_audio_detection_test)
+local_jarvis_copy_whisper_runtime(local_jarvis_audio_detection_test)
+
 add_executable(local_jarvis_asr_test
     AsrTest.cpp
 )

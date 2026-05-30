@@ -18,4 +18,14 @@ constexpr int kWhisperSampleRate = 16000;
 [[nodiscard]] double normalizedRms(std::span<const float> samples);
 [[nodiscard]] bool isProbablySilent(std::span<const float> samples, double threshold = 0.0008);
 
+struct WhisperPreprocessingResult {
+    std::vector<float> samples;
+    double appliedGainDb = 0.0;
+    bool limiterEngaged = false;
+};
+
+[[nodiscard]] WhisperPreprocessingResult preprocessWhisperSamples(
+    std::span<const float> samples,
+    const AsrPreprocessingConfig &config);
+
 } // namespace local_jarvis::asr

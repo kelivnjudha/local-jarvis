@@ -49,6 +49,7 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/setup/SystemCheck.cpp
     core/audio/AudioCapture.cpp
     core/audio/AudioLevelMeter.cpp
+    core/audio/AudioSpeechDetector.cpp
     core/audio/DummyAudioCapture.cpp
     core/audio/MicrophoneCapture.cpp
     core/asr/AudioChunkBuffer.cpp

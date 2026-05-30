@@ -144,10 +144,18 @@ bool testCaptionManager()
     manager.setSourceLanguage("auto");
     manager.setTargetLanguage("en");
     manager.addSegment(sampleSegment());
+    manager.addSegment(sampleSegment());
+    const auto duplicatesSuppressed = manager.duplicateSuppressedCount();
+    const auto storedAfterDuplicate = manager.state().latestSegments.size();
+    const auto displayBeforeClear = manager.currentDisplayText();
+    manager.clearSegments();
+    const auto heldText = manager.currentDisplayText();
 
     CaptionManager reloaded(storage);
-    const bool ok = expect(manager.state().latestSegments.size() == 1, "CaptionManager should store latest segments in memory.")
-        && expect(manager.currentDisplayText() == "Benedict's solution tests for reducing sugars.", "CaptionManager display text failed.")
+    const bool ok = expect(storedAfterDuplicate == 1, "CaptionManager should store latest non-duplicate segment in memory.")
+        && expect(displayBeforeClear == "Benedict's solution tests for reducing sugars.", "CaptionManager display text failed.")
+        && expect(duplicatesSuppressed == 1, "CaptionManager should suppress duplicate caption segments.")
+        && expect(heldText == displayBeforeClear, "CaptionManager should hold the last useful caption briefly after segments clear.")
         && expect(reloaded.loadSettings(), "Reloaded caption settings should load.")
         && expect(reloaded.state().captionMode == CaptionMode::OriginalOnly, "Caption mode did not persist.")
         && expect(!reloaded.state().showSpeaker, "Show speaker setting did not persist.")

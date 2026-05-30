@@ -12,6 +12,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
 - Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
+- Confirm the Local ASR section renders audio quality diagnostics: speech detector state, skipped silence count, skipped too-quiet count, blank output count, duplicate suppression count, preprocessing state, and last preprocessing gain.
 - Confirm the Local ASR section renders Whisper settings: model path, Browse Model, language, translate toggle, max threads, and Whisper status.
 - Confirm the companion shell appears as a small always-on-top window.
 - Confirm the assistant panel is open by default near the companion.
@@ -155,6 +156,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Enable ASR if it is not already enabled.
 - Confirm ASR status moves through Listening or Processing while microphone PCM is active.
 - Confirm the caption bubble shows stub transcript text such as "Stub transcript chunk 1".
+- Confirm the caption bubble does not flicker blank between ASR chunks or skipped chunks.
 - Confirm the Transcript panel shows the same stub transcript segment.
 - Confirm SQLite stores a transcript segment with source `microphone_asr_stub`.
 - Disable ASR.
@@ -178,9 +180,14 @@ Only run this section when Local Jarvis is built with `LOCAL_JARVIS_ENABLE_WHISP
 - Enable ASR.
 - Enable Microphone explicitly.
 - Speak a short phrase.
+- Confirm too-quiet input shows "Input may be too quiet for transcription" instead of creating a normal transcript row.
+- Confirm stronger input reaches ASR and the speech detector state moves to maybe speech, speech likely, or clipping risk.
 - Confirm transcript text appears in the caption bubble.
+- Confirm `[BLANK_AUDIO]`, empty, or whitespace-only ASR output is not shown as a normal caption.
 - Confirm the Transcript panel shows the same text.
 - Confirm SQLite stores a transcript segment with source `microphone_asr_whisper`.
+- Confirm SQLite does not store `[BLANK_AUDIO]`, empty, whitespace-only, or short-window duplicate transcript rows by default.
+- If ASR preprocessing is enabled through settings, confirm the UI shows the last applied gain and limiter state, and no audio file is written.
 - Stop the session.
 - Confirm ASR and microphone stop cleanly.
 - Close the app.

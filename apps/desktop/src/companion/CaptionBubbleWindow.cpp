@@ -143,16 +143,26 @@ void CaptionBubbleWindow::setDummyCaptionsEnabled(bool enabled)
 
 void CaptionBubbleWindow::refreshCaptionText()
 {
+    QString nextText;
     if (!m_microphonePlaceholderText.trimmed().isEmpty()) {
-        m_captionText = m_microphonePlaceholderText;
+        nextText = m_microphonePlaceholderText;
     } else {
-        m_captionText = QString::fromStdString(m_captionManager.currentDisplayText());
+        nextText = QString::fromStdString(m_captionManager.currentDisplayText());
     }
-    if (m_captionLabel) {
+    if (nextText == m_captionText) {
+        return;
+    }
+
+    m_captionText = nextText;
+    if (m_captionLabel && m_captionLabel->text() != m_captionText) {
         m_captionLabel->setText(m_captionText);
     }
-    setAccessibleDescription(m_captionText);
-    setToolTip(m_captionText);
+    if (accessibleDescription() != m_captionText) {
+        setAccessibleDescription(m_captionText);
+    }
+    if (toolTip() != m_captionText) {
+        setToolTip(m_captionText);
+    }
 }
 
 void CaptionBubbleWindow::paintEvent(QPaintEvent *)

@@ -10,10 +10,13 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <span>
+#include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -30,6 +33,123 @@ bool expect(bool condition, const char *message)
 std::vector<float> samples(std::size_t count, float value = 0.2F)
 {
     return std::vector<float>(count, value);
+}
+
+class CountingWhisperLikeEngine final : public local_jarvis::asr::AsrEngine {
+public:
+    explicit CountingWhisperLikeEngine(std::shared_ptr<int> callCount)
+        : m_callCount(std::move(callCount))
+    {
+    }
+
+    bool initialize(const std::string &) override
+    {
+        m_initialized = true;
+        return true;
+    }
+
+    local_jarvis::asr::AsrResult transcribeChunk(const local_jarvis::asr::AsrInputChunk &chunk) override
+    {
+        ++(*m_callCount);
+        const std::string text = "fake speech " + std::to_string(chunk.chunkId);
+        return local_jarvis::asr::AsrResult {
+            .ok = true,
+            .segment = local_jarvis::asr::AsrTranscriptSegment {
+                .id = "fake-" + std::to_string(chunk.chunkId),
+                .sessionId = chunk.sessionId,
+                .startMs = chunk.startMs,
+                .endMs = chunk.endMs,
+                .speaker = "Microphone",
+                .text = text,
+                .detectedLanguage = "en",
+                .confidence = 0.75,
+                .isFinal = true
+            },
+            .text = text
+        };
+    }
+
+    void shutdown() override
+    {
+        m_initialized = false;
+    }
+
+    std::string engineName() const override
+    {
+        return "Whisper";
+    }
+
+    bool isInitialized() const override
+    {
+        return m_initialized;
+    }
+
+private:
+    std::shared_ptr<int> m_callCount;
+    bool m_initialized = false;
+};
+
+class BlankWhisperLikeEngine final : public local_jarvis::asr::AsrEngine {
+public:
+    explicit BlankWhisperLikeEngine(std::string text)
+        : m_text(std::move(text))
+    {
+    }
+
+    bool initialize(const std::string &) override
+    {
+        m_initialized = true;
+        return true;
+    }
+
+    local_jarvis::asr::AsrResult transcribeChunk(const local_jarvis::asr::AsrInputChunk &chunk) override
+    {
+        return local_jarvis::asr::AsrResult {
+            .ok = true,
+            .segment = local_jarvis::asr::AsrTranscriptSegment {
+                .id = "blank-" + std::to_string(chunk.chunkId),
+                .sessionId = chunk.sessionId,
+                .startMs = chunk.startMs,
+                .endMs = chunk.endMs,
+                .speaker = "Microphone",
+                .text = m_text,
+                .detectedLanguage = "en",
+                .confidence = 0.0,
+                .isFinal = true
+            },
+            .text = m_text
+        };
+    }
+
+    void shutdown() override
+    {
+        m_initialized = false;
+    }
+
+    std::string engineName() const override
+    {
+        return "Whisper";
+    }
+
+    bool isInitialized() const override
+    {
+        return m_initialized;
+    }
+
+private:
+    std::string m_text;
+    bool m_initialized = false;
+};
+
+bool waitForStats(local_jarvis::asr::AsrWorker &worker, const std::function<bool(const local_jarvis::asr::AsrWorkerStats &)> &predicate)
+{
+    for (int attempt = 0; attempt < 50; ++attempt) {
+        if (predicate(worker.stats())) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    }
+    return false;
 }
 
 } // namespace
@@ -233,6 +353,145 @@ int main()
     }
     if (!expect(!local_jarvis::asr::isProbablySilent(samples(16000, 0.1F)), "Whisper conversion should keep audible synthetic samples.")) {
         return EXIT_FAILURE;
+    }
+
+    {
+        auto callCount = std::make_shared<int>(0);
+        AsrWorker skipWorker(std::make_unique<CountingWhisperLikeEngine>(callCount));
+        if (!expect(skipWorker.start(), "Whisper-like worker should start for silence skip test.")) {
+            return EXIT_FAILURE;
+        }
+        skipWorker.enqueueChunk(AsrInputChunk {
+            .chunkId = 101,
+            .sessionId = "session-skip",
+            .startMs = 0,
+            .endMs = 3000,
+            .samples = samples(48000, 0.0F),
+            .isFinalChunk = true
+        });
+        if (!expect(waitForStats(skipWorker, [](const auto &stats) { return stats.chunksSkippedSilence == 1; }),
+                "Silent Whisper chunks should be skipped before reaching the engine.")) {
+            return EXIT_FAILURE;
+        }
+        skipWorker.stop();
+        if (!expect(*callCount == 0, "Skipped silence should not call the Whisper engine.")) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    {
+        auto callCount = std::make_shared<int>(0);
+        AsrWorker quietWorker(std::make_unique<CountingWhisperLikeEngine>(callCount));
+        if (!expect(quietWorker.start(), "Whisper-like worker should start for too-quiet skip test.")) {
+            return EXIT_FAILURE;
+        }
+        quietWorker.enqueueChunk(AsrInputChunk {
+            .chunkId = 102,
+            .sessionId = "session-quiet",
+            .startMs = 0,
+            .endMs = 3000,
+            .samples = samples(48000, 0.002F),
+            .isFinalChunk = true
+        });
+        if (!expect(waitForStats(quietWorker, [](const auto &stats) { return stats.chunksSkippedTooQuiet == 1; }),
+                "Too-quiet Whisper chunks should be skipped by default.")) {
+            return EXIT_FAILURE;
+        }
+        quietWorker.stop();
+        if (!expect(*callCount == 0, "Skipped too-quiet chunks should not call the Whisper engine.")) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    {
+        auto callCount = std::make_shared<int>(0);
+        std::mutex speechMutex;
+        std::condition_variable speechCondition;
+        bool speechObserved = false;
+        AsrWorker speechWorker(std::make_unique<CountingWhisperLikeEngine>(callCount));
+        speechWorker.setSegmentCallback([&](const local_jarvis::asr::AsrTranscriptSegment &) {
+            {
+                std::lock_guard lock(speechMutex);
+                speechObserved = true;
+            }
+            speechCondition.notify_one();
+        });
+        if (!expect(speechWorker.start(), "Whisper-like worker should start for speech processing test.")) {
+            return EXIT_FAILURE;
+        }
+        speechWorker.enqueueChunk(AsrInputChunk {
+            .chunkId = 103,
+            .sessionId = "session-speech",
+            .startMs = 0,
+            .endMs = 3000,
+            .samples = samples(48000, 0.12F),
+            .isFinalChunk = true
+        });
+        {
+            std::unique_lock lock(speechMutex);
+            speechCondition.wait_for(lock, std::chrono::seconds(2), [&]() { return speechObserved; });
+        }
+        speechWorker.stop();
+        if (!expect(speechObserved && *callCount == 1, "Likely speech chunks should reach the Whisper engine.")) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    {
+        std::mutex blankMutex;
+        std::condition_variable blankCondition;
+        bool blankObserved = false;
+        AsrWorker blankWorker(std::make_unique<BlankWhisperLikeEngine>("[BLANK_AUDIO]"));
+        blankWorker.setSegmentCallback([&](const local_jarvis::asr::AsrTranscriptSegment &) {
+            {
+                std::lock_guard lock(blankMutex);
+                blankObserved = true;
+            }
+            blankCondition.notify_one();
+        });
+        if (!expect(blankWorker.start(), "Whisper-like worker should start for blank output test.")) {
+            return EXIT_FAILURE;
+        }
+        blankWorker.enqueueChunk(AsrInputChunk {
+            .chunkId = 104,
+            .sessionId = "session-blank",
+            .startMs = 0,
+            .endMs = 3000,
+            .samples = samples(48000, 0.12F),
+            .isFinalChunk = true
+        });
+        if (!expect(waitForStats(blankWorker, [](const auto &stats) { return stats.blankOutputs == 1; }),
+                "[BLANK_AUDIO] should be counted and suppressed.")) {
+            return EXIT_FAILURE;
+        }
+        {
+            std::unique_lock lock(blankMutex);
+            blankCondition.wait_for(lock, std::chrono::milliseconds(100), [&]() { return blankObserved; });
+        }
+        blankWorker.stop();
+        if (!expect(!blankObserved, "[BLANK_AUDIO] should not emit a transcript segment.")) {
+            return EXIT_FAILURE;
+        }
+    }
+
+    {
+        AsrWorker emptyWorker(std::make_unique<BlankWhisperLikeEngine>("   "));
+        if (!expect(emptyWorker.start(), "Whisper-like worker should start for empty output test.")) {
+            return EXIT_FAILURE;
+        }
+        emptyWorker.enqueueChunk(AsrInputChunk {
+            .chunkId = 105,
+            .sessionId = "session-empty",
+            .startMs = 0,
+            .endMs = 3000,
+            .samples = samples(48000, 0.12F),
+            .isFinalChunk = true
+        });
+        if (!expect(waitForStats(emptyWorker, [](const auto &stats) { return stats.blankOutputs == 1; }),
+                "Whitespace ASR output should be counted and suppressed.")) {
+            return EXIT_FAILURE;
+        }
+        emptyWorker.stop();
     }
 
     return EXIT_SUCCESS;

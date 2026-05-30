@@ -16,6 +16,7 @@
 #include <QTimer>
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -30,6 +31,7 @@
 #include "asr/AsrWorker.h"
 #include "asr/AudioChunkBuffer.h"
 #include "audio/DummyAudioCapture.h"
+#include "audio/AudioSpeechDetector.h"
 #include "audio/MicrophoneCapture.h"
 #include "caption/CaptionManager.h"
 #include "caption/DummyCaptionSource.h"
@@ -268,5 +270,14 @@ private:
     MicrophoneCompareResult m_microphoneCompareCurrentResult;
     QString m_microphoneRecommendation;
     double m_asrQuietRmsThreshold = 0.01;
+    local_jarvis::audio::AudioSpeechDetectorConfig m_asrSpeechDetectionConfig;
+    bool m_asrDebugProcessTooQuiet = false;
+    bool m_asrPreprocessingEnabled = false;
+    double m_asrPreprocessingTargetRms = 0.08;
+    double m_asrPreprocessingMaxGainDb = 12.0;
+    std::string m_lastStoredAsrText;
+    std::string m_lastStoredAsrSource;
+    std::chrono::steady_clock::time_point m_lastStoredAsrAt {};
+    std::uint64_t m_asrDuplicateTranscriptSuppressed = 0;
     std::string m_lastReportedMicrophoneFailure;
 };

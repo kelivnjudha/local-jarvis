@@ -66,4 +66,41 @@ bool isProbablySilent(std::span<const float> samples, double threshold)
     return normalizedRms(samples) <= threshold;
 }
 
+WhisperPreprocessingResult preprocessWhisperSamples(
+    std::span<const float> samples,
+    const AsrPreprocessingConfig &config)
+{
+    WhisperPreprocessingResult result;
+    result.samples.assign(samples.begin(), samples.end());
+    if (!config.enabled || result.samples.empty()) {
+        return result;
+    }
+
+    const double currentRms = normalizedRms(result.samples);
+    if (currentRms <= 0.000001) {
+        return result;
+    }
+
+    const double targetRms = std::clamp(config.targetRms, 0.005, 0.35);
+    const double maxGainDb = std::clamp(config.maxGainDb, 0.0, 30.0);
+    const double requestedGain = targetRms / currentRms;
+    const double maxGain = std::pow(10.0, maxGainDb / 20.0);
+    const double gain = std::clamp(requestedGain, 1.0, maxGain);
+
+    if (gain <= 1.0001) {
+        return result;
+    }
+
+    result.appliedGainDb = 20.0 * std::log10(gain);
+    for (float &sample : result.samples) {
+        const double amplified = static_cast<double>(sample) * gain;
+        const double limited = std::clamp(amplified, -0.98, 0.98);
+        if (limited != amplified) {
+            result.limiterEngaged = true;
+        }
+        sample = static_cast<float>(limited);
+    }
+    return result;
+}
+
 } // namespace local_jarvis::asr

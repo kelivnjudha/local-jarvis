@@ -23,6 +23,7 @@
 #include <QtGlobal>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -60,6 +61,34 @@ QString levelQualityText(double rms, double peak)
         return "Usable";
     }
     return "Too quiet";
+}
+
+std::string trimAscii(std::string value)
+{
+    const auto begin = std::find_if_not(value.begin(), value.end(), [](unsigned char character) {
+        return std::isspace(character) != 0;
+    });
+    const auto end = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char character) {
+        return std::isspace(character) != 0;
+    }).base();
+    if (begin >= end) {
+        return {};
+    }
+    return std::string(begin, end);
+}
+
+std::string lowercaseAscii(std::string value)
+{
+    for (char &character : value) {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
+    return value;
+}
+
+bool isBlankAsrText(const std::string &text)
+{
+    const std::string trimmed = trimAscii(text);
+    return trimmed.empty() || lowercaseAscii(trimmed) == "[blank_audio]";
 }
 
 QRect availableDesktopGeometry()
@@ -1471,6 +1500,48 @@ void MainWindow::loadAsrSettings()
     } catch (...) {
         m_asrQuietRmsThreshold = 0.01;
     }
+    try {
+        m_asrSpeechDetectionConfig.silenceDbfsThreshold = std::clamp(std::stod(m_storage.getSetting("asr.speech.silence_dbfs_threshold").value_or("-60.0")), -120.0, 0.0);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.silenceDbfsThreshold = -60.0;
+    }
+    try {
+        m_asrSpeechDetectionConfig.tooQuietDbfsThreshold = std::clamp(std::stod(m_storage.getSetting("asr.speech.too_quiet_dbfs_threshold").value_or("-45.0")), -120.0, 0.0);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.tooQuietDbfsThreshold = -45.0;
+    }
+    try {
+        m_asrSpeechDetectionConfig.speechLikelyDbfsThreshold = std::clamp(std::stod(m_storage.getSetting("asr.speech.likely_dbfs_threshold").value_or("-32.0")), -120.0, 0.0);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.speechLikelyDbfsThreshold = -32.0;
+    }
+    try {
+        m_asrSpeechDetectionConfig.clippingPeakThreshold = std::clamp(std::stod(m_storage.getSetting("asr.speech.clipping_peak_threshold").value_or("0.90")), 0.20, 1.0);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.clippingPeakThreshold = 0.90;
+    }
+    try {
+        m_asrSpeechDetectionConfig.minNonZeroPercentage = std::clamp(std::stod(m_storage.getSetting("asr.speech.min_non_zero_percentage").value_or("0.02")), 0.0, 1.0);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.minNonZeroPercentage = 0.02;
+    }
+    try {
+        m_asrSpeechDetectionConfig.minChunkDurationMs = std::clamp(std::stoi(m_storage.getSetting("asr.speech.min_chunk_duration_ms").value_or("300")), 0, 3000);
+    } catch (...) {
+        m_asrSpeechDetectionConfig.minChunkDurationMs = 300;
+    }
+    m_asrDebugProcessTooQuiet = m_storage.getSetting("asr.debug_process_too_quiet").value_or("false") == "true";
+    m_asrPreprocessingEnabled = m_storage.getSetting("asr.preprocessing.enabled").value_or("false") == "true";
+    try {
+        m_asrPreprocessingTargetRms = std::clamp(std::stod(m_storage.getSetting("asr.preprocessing.target_rms").value_or("0.08")), 0.005, 0.35);
+    } catch (...) {
+        m_asrPreprocessingTargetRms = 0.08;
+    }
+    try {
+        m_asrPreprocessingMaxGainDb = std::clamp(std::stod(m_storage.getSetting("asr.preprocessing.max_gain_db").value_or("12.0")), 0.0, 30.0);
+    } catch (...) {
+        m_asrPreprocessingMaxGainDb = 12.0;
+    }
     m_asrEnabled.store(m_storage.getSetting("asr.enabled").value_or("false") == "true");
     resetAsrWorkerForBackend();
     refreshStatus();
@@ -1489,6 +1560,16 @@ void MainWindow::saveAsrSettings()
     m_storage.setSetting("asr.whisper.translate_to_english", m_whisperTranslateToEnglish ? "true" : "false");
     m_storage.setSetting("asr.whisper.max_threads", std::to_string(std::clamp(m_whisperMaxThreads, 1, 16)));
     m_storage.setSetting("asr.input_quiet_rms_threshold", std::to_string(m_asrQuietRmsThreshold));
+    m_storage.setSetting("asr.speech.silence_dbfs_threshold", std::to_string(m_asrSpeechDetectionConfig.silenceDbfsThreshold));
+    m_storage.setSetting("asr.speech.too_quiet_dbfs_threshold", std::to_string(m_asrSpeechDetectionConfig.tooQuietDbfsThreshold));
+    m_storage.setSetting("asr.speech.likely_dbfs_threshold", std::to_string(m_asrSpeechDetectionConfig.speechLikelyDbfsThreshold));
+    m_storage.setSetting("asr.speech.clipping_peak_threshold", std::to_string(m_asrSpeechDetectionConfig.clippingPeakThreshold));
+    m_storage.setSetting("asr.speech.min_non_zero_percentage", std::to_string(m_asrSpeechDetectionConfig.minNonZeroPercentage));
+    m_storage.setSetting("asr.speech.min_chunk_duration_ms", std::to_string(m_asrSpeechDetectionConfig.minChunkDurationMs));
+    m_storage.setSetting("asr.debug_process_too_quiet", m_asrDebugProcessTooQuiet ? "true" : "false");
+    m_storage.setSetting("asr.preprocessing.enabled", m_asrPreprocessingEnabled ? "true" : "false");
+    m_storage.setSetting("asr.preprocessing.target_rms", std::to_string(m_asrPreprocessingTargetRms));
+    m_storage.setSetting("asr.preprocessing.max_gain_db", std::to_string(m_asrPreprocessingMaxGainDb));
 }
 
 void MainWindow::setAsrEnabled(bool enabled)
@@ -1644,6 +1725,18 @@ void MainWindow::configureAsrWorkerCallbacks()
             }
             if (status == local_jarvis::asr::AsrStatus::Error) {
                 recordAsrEvent("asr_error", message);
+            } else if (message == "Waiting for speech...") {
+                recordAsrEvent("asr_chunk_skipped_silence", message);
+            } else if (message == "Input too quiet for transcription") {
+                recordAsrEvent("asr_chunk_skipped_too_quiet", message);
+            } else if (message == "ASR blank output suppressed.") {
+                recordAsrEvent("asr_blank_output", message);
+            } else if (message == "ASR preprocessing applied.") {
+                const auto stats = m_asrWorker ? m_asrWorker->stats() : local_jarvis::asr::AsrWorkerStats {};
+                recordAsrEvent("asr_preprocessing_applied", QString("Applied gain %1 dB. Limiter: %2")
+                    .arg(QString::number(stats.lastPreprocessingGainDb, 'f', 1),
+                         stats.lastPreprocessingLimiterEngaged ? "yes" : "no")
+                    .toStdString());
             }
             refreshStatus();
         });
@@ -1725,7 +1818,28 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
         return;
     }
 
-    m_captionManager.addSegment(local_jarvis::asr::toCaptionSegment(segment));
+    auto sanitizedSegment = segment;
+    sanitizedSegment.text = trimAscii(segment.text);
+    if (isBlankAsrText(sanitizedSegment.text)) {
+        recordAsrEvent("asr_blank_output", segment.text.empty() ? "Empty ASR transcript suppressed." : segment.text, segment.sessionId);
+        refreshStatus();
+        return;
+    }
+
+    const std::string transcriptSource = currentAsrTranscriptSource();
+    const auto now = std::chrono::steady_clock::now();
+    if (sanitizedSegment.isFinal
+        && sanitizedSegment.text == m_lastStoredAsrText
+        && transcriptSource == m_lastStoredAsrSource
+        && m_lastStoredAsrAt != std::chrono::steady_clock::time_point {}
+        && std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastStoredAsrAt).count() <= 5000) {
+        ++m_asrDuplicateTranscriptSuppressed;
+        recordAsrEvent("asr_duplicate_suppressed", sanitizedSegment.text, sanitizedSegment.sessionId);
+        refreshStatus();
+        return;
+    }
+
+    m_captionManager.addSegment(local_jarvis::asr::toCaptionSegment(sanitizedSegment));
     if (m_captionBubbleWindow) {
         m_captionBubbleWindow->setMicrophonePlaceholderText("");
         m_captionBubbleWindow->refreshCaptionText();
@@ -1736,33 +1850,37 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
         .startMs = segment.startMs,
         .endMs = segment.endMs,
         .speaker = segment.speaker,
-        .text = segment.text,
-        .source = currentAsrTranscriptSource()
+        .text = sanitizedSegment.text,
+        .source = transcriptSource
     });
 
     if (m_asrLastSegmentLabel) {
         m_asrLastSegmentLabel->setText(QString("Last transcript: [%1-%2 ms] %3")
             .arg(segment.startMs)
             .arg(segment.endMs)
-            .arg(QString::fromStdString(segment.text)));
+            .arg(QString::fromStdString(sanitizedSegment.text)));
     }
 
     const auto currentSessionId = m_sessionManager ? m_sessionManager->currentSessionId() : std::nullopt;
-    if (segment.isFinal && currentSessionId.has_value() && *currentSessionId == segment.sessionId) {
+    if (sanitizedSegment.isFinal && currentSessionId.has_value() && *currentSessionId == sanitizedSegment.sessionId) {
         const auto storedId = m_storage.addTranscriptSegment(local_jarvis::storage::TranscriptSegmentInput {
-            .sessionId = segment.sessionId,
-            .startMs = segment.startMs,
-            .endMs = segment.endMs,
-            .speaker = segment.speaker,
-            .text = segment.text,
-            .source = currentAsrTranscriptSource()
+            .sessionId = sanitizedSegment.sessionId,
+            .startMs = sanitizedSegment.startMs,
+            .endMs = sanitizedSegment.endMs,
+            .speaker = sanitizedSegment.speaker,
+            .text = sanitizedSegment.text,
+            .source = transcriptSource
         });
         if (!storedId.has_value()) {
-            recordAsrEvent("asr_error", "Failed to store ASR transcript segment: " + m_storage.lastError(), segment.sessionId);
+            recordAsrEvent("asr_error", "Failed to store ASR transcript segment: " + m_storage.lastError(), sanitizedSegment.sessionId);
+        } else {
+            m_lastStoredAsrText = sanitizedSegment.text;
+            m_lastStoredAsrSource = transcriptSource;
+            m_lastStoredAsrAt = now;
         }
     }
 
-    recordAsrEvent("asr_chunk_processed", segment.text, segment.sessionId);
+    recordAsrEvent("asr_chunk_processed", sanitizedSegment.text, sanitizedSegment.sessionId);
     if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper && m_storage.isOpen()) {
         m_storage.addModelEvent(
             "whisper_transcript_segment_created",
@@ -2041,7 +2159,15 @@ local_jarvis::asr::AsrEngineConfig MainWindow::currentAsrConfig() const
         .modelPath = m_asrBackend == local_jarvis::asr::AsrBackend::Whisper ? m_whisperModelPath : std::string {},
         .language = m_whisperLanguage.empty() ? "auto" : m_whisperLanguage,
         .translateToEnglish = m_whisperTranslateToEnglish,
-        .maxThreads = std::clamp(m_whisperMaxThreads, 1, 16)
+        .maxThreads = std::clamp(m_whisperMaxThreads, 1, 16),
+        .speechDetection = m_asrSpeechDetectionConfig,
+        .skipTooQuietChunks = true,
+        .debugProcessTooQuiet = m_asrDebugProcessTooQuiet,
+        .preprocessing = local_jarvis::asr::AsrPreprocessingConfig {
+            .enabled = m_asrBackend == local_jarvis::asr::AsrBackend::Whisper && m_asrPreprocessingEnabled,
+            .targetRms = m_asrPreprocessingTargetRms,
+            .maxGainDb = m_asrPreprocessingMaxGainDb
+        }
     };
 }
 
@@ -2171,11 +2297,10 @@ void MainWindow::refreshStatus()
             && asrStats.lastChunkId > 0
             && asrStats.lastChunkRms > 0.0
             && asrStats.lastChunkRms < m_asrQuietRmsThreshold;
-        m_asrStatsLabel->setText(QString(
-            "Chunks queued: %1 | processed: %2 | pending: %3\n"
+        QString statsText = QString(
+            "Chunks queued: %1 | handled: %2 | pending: %3\n"
             "Last chunk: id %4 | %5 ms | input %6 Hz/%7 ch/%8 samples | Whisper samples: %9\n"
-            "Last chunk RMS: %10 (%11) | peak: %12 (%13) | non-zero: %14 | silent: %15 | %16\n"
-            "Last ASR text/result: %17%18")
+            "Last chunk RMS: %10 (%11) | peak: %12 (%13) | non-zero: %14 | silent: %15 | %16")
             .arg(QString::number(asrStats.chunksQueued),
                  QString::number(asrStats.chunksProcessed),
                  QString::number(asrStats.pendingChunks),
@@ -2191,9 +2316,26 @@ void MainWindow::refreshStatus()
                  dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(asrStats.lastChunkPeak)),
                  percentText(asrStats.lastChunkNonZeroRatio),
                  asrStats.lastChunkTreatedAsSilent ? "yes" : "no",
-                 levelQualityText(asrStats.lastChunkRms, asrStats.lastChunkPeak),
-                 asrStats.lastTranscriptText.empty() ? "none" : QString::fromStdString(asrStats.lastTranscriptText),
-                 asrChunkTooQuiet ? "\nInput may be too quiet for transcription." : ""));
+                 levelQualityText(asrStats.lastChunkRms, asrStats.lastChunkPeak));
+        statsText += QString("\nDetector: %1 | skipped silence: %2 | skipped too quiet: %3 | blank outputs: %4")
+            .arg(asrStats.lastSpeechDetectionState.empty() ? "none" : QString::fromStdString(asrStats.lastSpeechDetectionState),
+                 QString::number(asrStats.chunksSkippedSilence),
+                 QString::number(asrStats.chunksSkippedTooQuiet),
+                 QString::number(asrStats.blankOutputs));
+        statsText += QString("\nDuplicates suppressed: captions %1 | transcripts %2")
+            .arg(QString::number(m_captionManager.duplicateSuppressedCount()),
+                 QString::number(m_asrDuplicateTranscriptSuppressed));
+        statsText += QString("\nPreprocessing: %1 | last gain: %2 dB | limiter: %3")
+            .arg(asrStats.preprocessingEnabled ? "enabled" : "disabled",
+                 QString::number(asrStats.lastPreprocessingGainDb, 'f', 1),
+                 asrStats.lastPreprocessingLimiterEngaged ? "yes" : "no");
+        statsText += QString("\nLast ASR status: %1 | text/result: %2")
+            .arg(asrStats.lastStatusMessage.empty() ? "none" : QString::fromStdString(asrStats.lastStatusMessage),
+                 asrStats.lastTranscriptText.empty() ? "none" : QString::fromStdString(asrStats.lastTranscriptText));
+        if (asrChunkTooQuiet) {
+            statsText += "\nInput may be too quiet for transcription.";
+        }
+        m_asrStatsLabel->setText(statsText);
     }
     if (m_asrErrorLabel) {
         m_asrErrorLabel->setText(QString("Last ASR error: %1")

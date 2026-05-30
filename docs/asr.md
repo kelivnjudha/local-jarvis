@@ -62,12 +62,47 @@ Do not commit model files to this repo.
 
 - Microphone capture still starts only after explicit user action.
 - ASR is controlled separately from the microphone toggle.
+- Whisper chunks are classified before transcription as silence, too quiet, maybe speech, likely speech, or clipping risk.
+- Clearly silent chunks are skipped before Whisper. Too-quiet chunks are skipped by default and shown as a visible warning instead of creating transcript rows.
+- Empty, whitespace-only, and `[BLANK_AUDIO]` ASR outputs are suppressed by default and counted in diagnostics.
+- Optional Whisper preprocessing is in-memory only. When enabled, it can apply capped gain to low but non-silent chunks and uses limiter protection to avoid clipping.
 - Whisper processes normalized in-memory mono float samples.
 - 48 kHz and other sample rates are converted to 16 kHz with a simple MVP linear resampler.
 - Raw audio is not written to disk.
 - Transcript text is stored only while an explicit session is active.
 - Standalone microphone level tests do not store transcripts.
 - Whisper transcript segments use source `microphone_asr_whisper`.
+
+## Audio And Caption Quality Settings
+
+These settings are stored in SQLite and can be adjusted by development builds or future UI controls:
+
+- `asr.speech.silence_dbfs_threshold`, default `-60.0`
+- `asr.speech.too_quiet_dbfs_threshold`, default `-45.0`
+- `asr.speech.likely_dbfs_threshold`, default `-32.0`
+- `asr.speech.clipping_peak_threshold`, default `0.90`
+- `asr.speech.min_non_zero_percentage`, default `0.02`
+- `asr.speech.min_chunk_duration_ms`, default `300`
+- `asr.debug_process_too_quiet`, default `false`
+- `asr.preprocessing.enabled`, default `false`
+- `asr.preprocessing.target_rms`, default `0.08`
+- `asr.preprocessing.max_gain_db`, default `12.0`
+- `caption.hold_ms`, default `4000`
+- `caption.suppress_duplicates`, default `true`
+- `caption.duplicate_window_ms`, default `5000`
+- `caption.clear_on_asr_off`, default `false`
+
+Caption display is stabilized by holding the last useful caption briefly, suppressing repeated identical captions within the duplicate window, and avoiding label refresh work when the formatted caption text has not changed.
+
+## Local Events
+
+Audio and ASR optimization paths write local diagnostic events only. They do not write raw audio:
+
+- `asr_chunk_skipped_silence`
+- `asr_chunk_skipped_too_quiet`
+- `asr_blank_output`
+- `asr_duplicate_suppressed`
+- `asr_preprocessing_applied`
 
 ## Privacy Boundary
 

@@ -30,6 +30,14 @@ struct AsrWorkerStats {
     double lastChunkDbfs = -120.0;
     double lastChunkNonZeroRatio = 0.0;
     bool lastChunkTreatedAsSilent = false;
+    std::string lastSpeechDetectionState = "none";
+    std::uint64_t chunksSkippedSilence = 0;
+    std::uint64_t chunksSkippedTooQuiet = 0;
+    std::uint64_t blankOutputs = 0;
+    bool preprocessingEnabled = false;
+    double lastPreprocessingGainDb = 0.0;
+    bool lastPreprocessingLimiterEngaged = false;
+    std::string lastStatusMessage;
     std::string lastTranscriptText;
     std::string lastError;
 };

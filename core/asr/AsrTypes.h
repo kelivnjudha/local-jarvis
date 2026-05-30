@@ -1,5 +1,6 @@
 #pragma once
 
+#include "audio/AudioSpeechDetector.h"
 #include "caption/CaptionTypes.h"
 
 #include <cstdint>
@@ -58,11 +59,21 @@ struct AsrResult {
     std::string message;
 };
 
+struct AsrPreprocessingConfig {
+    bool enabled = false;
+    double targetRms = 0.08;
+    double maxGainDb = 12.0;
+};
+
 struct AsrEngineConfig {
     std::string modelPath;
     std::string language = "auto";
     bool translateToEnglish = false;
     int maxThreads = 4;
+    audio::AudioSpeechDetectorConfig speechDetection {};
+    bool skipTooQuietChunks = true;
+    bool debugProcessTooQuiet = false;
+    AsrPreprocessingConfig preprocessing {};
 };
 
 [[nodiscard]] inline std::string toString(AsrBackend backend)

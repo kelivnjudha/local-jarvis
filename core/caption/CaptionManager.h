@@ -4,6 +4,7 @@
 #include "CaptionState.h"
 
 #include <cstddef>
+#include <chrono>
 #include <string>
 
 namespace local_jarvis::storage {
@@ -19,6 +20,7 @@ public:
 
     [[nodiscard]] const CaptionState &state() const;
     [[nodiscard]] std::string currentDisplayText() const;
+    [[nodiscard]] std::size_t duplicateSuppressedCount() const;
 
     bool loadSettings();
     bool saveSettings();
@@ -30,7 +32,12 @@ public:
     void setShowSpeaker(bool enabled);
     void setMaxLines(int maxLines);
     void setMaxCharacters(int maxCharacters);
+    void setHoldMs(int holdMs);
+    void setSuppressDuplicates(bool enabled);
+    void setDuplicateWindowMs(int duplicateWindowMs);
+    void setClearOnAsrOff(bool enabled);
     void addSegment(const CaptionSegment &segment);
+    void clearSegments();
 
 private:
     [[nodiscard]] bool storageReady() const;
@@ -42,11 +49,18 @@ private:
     void saveString(const char *key, const std::string &value);
     void touchUpdatedAt();
     void trimLatestSegments();
+    [[nodiscard]] bool shouldSuppressDuplicate(const CaptionSegment &segment);
+    [[nodiscard]] std::string segmentTextKey(const CaptionSegment &segment) const;
 
     storage::Storage *m_storage = nullptr;
     CaptionState m_state {};
     CaptionFormatter m_formatter;
     std::size_t m_maxStoredSegments = 8;
+    mutable std::string m_lastDisplayText;
+    mutable std::chrono::steady_clock::time_point m_lastUsefulDisplayAt {};
+    std::string m_lastAcceptedSegmentText;
+    std::chrono::steady_clock::time_point m_lastAcceptedSegmentAt {};
+    std::size_t m_duplicateSuppressedCount = 0;
 };
 
 } // namespace local_jarvis::caption
