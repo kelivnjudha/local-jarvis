@@ -117,6 +117,12 @@ private:
     [[nodiscard]] local_jarvis::asr::AsrBackend selectedAsrBackend() const;
     [[nodiscard]] local_jarvis::asr::AsrEngineConfig currentAsrConfig() const;
     [[nodiscard]] std::string currentAsrTranscriptSource(local_jarvis::asr::AsrAudioSource source) const;
+    [[nodiscard]] std::string normalizedTranscriptKey(const std::string &text) const;
+    [[nodiscard]] bool isNearTranscriptDuplicate(const std::string &left, const std::string &right) const;
+    [[nodiscard]] bool shouldSuppressStoredAsrDuplicate(
+        const local_jarvis::asr::AsrTranscriptSegment &segment,
+        const std::string &transcriptSource,
+        bool &replacePreviousWithSystemAudio) const;
     [[nodiscard]] bool sessionActive() const;
     [[nodiscard]] bool isRealMicrophoneMode() const;
     [[nodiscard]] local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture();
@@ -220,6 +226,8 @@ private:
     QPushButton *m_resetCompanionVisualButton = nullptr;
     QComboBox *m_captionModeCombo = nullptr;
     QCheckBox *m_captionShowSpeakerCheckBox = nullptr;
+    QCheckBox *m_captionShowSourceLabelsCheckBox = nullptr;
+    QComboBox *m_captionSourceDisplayModeCombo = nullptr;
     QSpinBox *m_captionMaxLinesSpinBox = nullptr;
     QSpinBox *m_captionMaxCharactersSpinBox = nullptr;
     QLineEdit *m_captionSourceLanguageEdit = nullptr;
@@ -310,7 +318,10 @@ private:
     double m_asrPreprocessingTargetRms = 0.08;
     double m_asrPreprocessingMaxGainDb = 12.0;
     std::string m_lastStoredAsrText;
+    std::string m_lastStoredAsrTextKey;
     std::string m_lastStoredAsrSource;
+    local_jarvis::asr::AsrAudioSource m_lastStoredAsrAudioSource = local_jarvis::asr::AsrAudioSource::Microphone;
+    std::optional<std::string> m_lastStoredAsrId;
     std::chrono::steady_clock::time_point m_lastStoredAsrAt {};
     std::uint64_t m_asrDuplicateTranscriptSuppressed = 0;
     std::string m_lastReportedMicrophoneFailure;

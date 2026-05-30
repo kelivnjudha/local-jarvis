@@ -21,6 +21,7 @@ public:
     [[nodiscard]] const CaptionState &state() const;
     [[nodiscard]] std::string currentDisplayText() const;
     [[nodiscard]] std::size_t duplicateSuppressedCount() const;
+    [[nodiscard]] std::size_t crossSourceDuplicateSuppressedCount() const;
 
     bool loadSettings();
     bool saveSettings();
@@ -30,16 +31,24 @@ public:
     void setSourceLanguage(const std::string &languageCode);
     void setTargetLanguage(const std::string &languageCode);
     void setShowSpeaker(bool enabled);
+    void setShowSourceLabels(bool enabled);
+    void setSourceDisplayMode(CaptionSourceDisplayMode mode);
     void setMaxLines(int maxLines);
     void setMaxCharacters(int maxCharacters);
     void setHoldMs(int holdMs);
     void setSuppressDuplicates(bool enabled);
     void setDuplicateWindowMs(int duplicateWindowMs);
     void setClearOnAsrOff(bool enabled);
-    void addSegment(const CaptionSegment &segment);
+    bool addSegment(const CaptionSegment &segment);
     void clearSegments();
 
 private:
+    enum class DuplicateDecision {
+        Accept,
+        Suppress,
+        ReplaceWithPreferredSource
+    };
+
     [[nodiscard]] bool storageReady() const;
     [[nodiscard]] bool settingBool(const char *key, bool defaultValue);
     [[nodiscard]] int settingInt(const char *key, int defaultValue);
@@ -49,8 +58,11 @@ private:
     void saveString(const char *key, const std::string &value);
     void touchUpdatedAt();
     void trimLatestSegments();
-    [[nodiscard]] bool shouldSuppressDuplicate(const CaptionSegment &segment);
+    [[nodiscard]] DuplicateDecision duplicateDecision(const CaptionSegment &segment) const;
     [[nodiscard]] std::string segmentTextKey(const CaptionSegment &segment) const;
+    [[nodiscard]] std::string normalizedTextKey(const CaptionSegment &segment) const;
+    [[nodiscard]] bool isNearDuplicateText(const std::string &left, const std::string &right) const;
+    [[nodiscard]] bool systemAudioPreferredOver(CaptionSource existingSource, CaptionSource nextSource) const;
 
     storage::Storage *m_storage = nullptr;
     CaptionState m_state {};
@@ -59,8 +71,10 @@ private:
     mutable std::string m_lastDisplayText;
     mutable std::chrono::steady_clock::time_point m_lastUsefulDisplayAt {};
     std::string m_lastAcceptedSegmentText;
+    CaptionSource m_lastAcceptedSegmentSource = CaptionSource::Unknown;
     std::chrono::steady_clock::time_point m_lastAcceptedSegmentAt {};
     std::size_t m_duplicateSuppressedCount = 0;
+    std::size_t m_crossSourceDuplicateSuppressedCount = 0;
 };
 
 } // namespace local_jarvis::caption

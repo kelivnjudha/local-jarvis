@@ -147,6 +147,7 @@ public:
     bool endSession(const std::string &sessionId);
     bool setSessionSummaryStatus(const std::string &sessionId, const std::string &summaryStatus);
     std::optional<std::string> addTranscriptSegment(const TranscriptSegmentInput &segment);
+    bool deleteTranscriptSegment(const std::string &segmentId);
     std::optional<std::string> addScreenOcrSegment(const ScreenOcrSegmentInput &segment);
     std::optional<std::string> addProcessedNote(const ProcessedNoteInput &note);
     std::optional<std::string> addActionItem(const ActionItemInput &actionItem);

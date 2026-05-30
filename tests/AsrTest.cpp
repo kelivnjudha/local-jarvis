@@ -266,12 +266,15 @@ int main()
     }
 
     auto captionSegment = local_jarvis::asr::toCaptionSegment(firstResult.segment);
-    if (!expect(captionSegment.originalText == firstResult.text && captionSegment.speaker == "Mic",
+    if (!expect(captionSegment.originalText == firstResult.text
+            && captionSegment.speaker == "Mic"
+            && captionSegment.source == local_jarvis::caption::CaptionSource::Microphone,
             "ASR transcript segments should convert to caption segments.")) {
         return EXIT_FAILURE;
     }
     const auto systemCaptionSegment = local_jarvis::asr::toCaptionSegment(systemResult.segment);
-    if (!expect(systemCaptionSegment.speaker == "System",
+    if (!expect(systemCaptionSegment.speaker == "System"
+            && systemCaptionSegment.source == local_jarvis::caption::CaptionSource::SystemAudio,
             "System audio transcript segments should convert to System caption labels.")) {
         return EXIT_FAILURE;
     }
@@ -360,6 +363,16 @@ int main()
     });
     if (!expect(systemTranscriptId.has_value() && storage.countTranscriptSegmentsForSession(*sessionId) == 2,
             "System audio ASR transcript segments should store with system_audio_asr_stub source.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(storage.deleteTranscriptSegment(*transcriptId)
+            && storage.countTranscriptSegmentsForSession(*sessionId) == 1,
+            "Duplicate storage replacement should be able to remove the earlier transcript row.")) {
+        return EXIT_FAILURE;
+    }
+    const auto recentSystemOnly = storage.listRecentTranscriptSegments(*sessionId, 5);
+    if (!expect(recentSystemOnly.size() == 1 && recentSystemOnly.front().source == "system_audio_asr_stub",
+            "System audio transcript source should be preserved after duplicate replacement.")) {
         return EXIT_FAILURE;
     }
     if (!expect(storage.setSetting("asr.backend", "whisper")

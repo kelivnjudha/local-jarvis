@@ -139,6 +139,17 @@ struct AsrEngineConfig {
         : "microphone_asr_stub";
 }
 
+[[nodiscard]] inline caption::CaptionSource captionSourceFor(AsrAudioSource source)
+{
+    switch (source) {
+    case AsrAudioSource::Microphone:
+        return caption::CaptionSource::Microphone;
+    case AsrAudioSource::SystemAudio:
+        return caption::CaptionSource::SystemAudio;
+    }
+    return caption::CaptionSource::Unknown;
+}
+
 [[nodiscard]] inline AsrBackend asrBackendFromString(const std::string &value)
 {
     if (value == "whisper" || value == "Whisper") {
@@ -188,7 +199,8 @@ struct AsrEngineConfig {
         .detectedLanguage = segment.detectedLanguage,
         .startMs = segment.startMs,
         .endMs = segment.endMs,
-        .isFinal = segment.isFinal
+        .isFinal = segment.isFinal,
+        .source = captionSourceFor(segment.audioSource)
     };
 }
 

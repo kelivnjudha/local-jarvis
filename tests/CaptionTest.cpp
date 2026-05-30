@@ -117,6 +117,120 @@ bool testLimitsAndFallbacks()
     return expect(formatter.format(fallbackState) == "EN: Fallback original.", "Missing translation should fall back safely.");
 }
 
+bool testSourceAwareFormatting()
+{
+    using local_jarvis::caption::CaptionFormatter;
+    using local_jarvis::caption::CaptionMode;
+    using local_jarvis::caption::CaptionSegment;
+    using local_jarvis::caption::CaptionSource;
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+    using local_jarvis::caption::CaptionState;
+
+    CaptionFormatter formatter;
+    auto mic = sampleSegment();
+    mic.id = "mic-caption";
+    mic.speaker = "Student";
+    mic.originalText = "Shared caption text.";
+    mic.translatedText = "Shared caption text.";
+    mic.summaryText = "Mic summary.";
+    mic.startMs = 1000;
+    mic.endMs = 2000;
+    mic.source = CaptionSource::Microphone;
+
+    auto system = mic;
+    system.id = "system-caption";
+    system.originalText = "System caption text.";
+    system.translatedText = "System caption text.";
+    system.summaryText = "System summary.";
+    system.startMs = 500;
+    system.endMs = 1500;
+    system.source = CaptionSource::SystemAudio;
+
+    CaptionState state;
+    state.captionMode = CaptionMode::OriginalOnly;
+    state.maxLines = 4;
+    state.latestSegments = { mic, system };
+
+    if (!expect(formatter.format(state) == "System: System caption text.\nMic: Shared caption text.",
+            "Combined source formatting should be chronological with source labels.")) {
+        return false;
+    }
+
+    state.sourceDisplayMode = CaptionSourceDisplayMode::SystemOnly;
+    if (!expect(formatter.format(state) == "System: System caption text.",
+            "System-only caption filtering failed.")) {
+        return false;
+    }
+
+    state.sourceDisplayMode = CaptionSourceDisplayMode::MicrophoneOnly;
+    if (!expect(formatter.format(state) == "Mic: Shared caption text.",
+            "Mic-only caption filtering failed.")) {
+        return false;
+    }
+
+    state.sourceDisplayMode = CaptionSourceDisplayMode::PreferSystemAudio;
+    if (!expect(formatter.format(state) == "System: System caption text.",
+            "Prefer-system caption filtering failed.")) {
+        return false;
+    }
+
+    state.sourceDisplayMode = CaptionSourceDisplayMode::PreferMicrophone;
+    if (!expect(formatter.format(state) == "Mic: Shared caption text.",
+            "Prefer-mic caption filtering failed.")) {
+        return false;
+    }
+
+    state.showSourceLabels = false;
+    state.showSpeaker = true;
+    state.sourceDisplayMode = CaptionSourceDisplayMode::CombinedChronological;
+    return expect(formatter.format(state) == "Student: System caption text.\nStudent: Shared caption text.",
+        "Source labels should be configurable independently from speaker labels.");
+}
+
+bool testCrossSourceDuplicateSuppression()
+{
+    using local_jarvis::caption::CaptionManager;
+    using local_jarvis::caption::CaptionMode;
+    using local_jarvis::caption::CaptionSource;
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+
+    CaptionManager manager;
+    manager.setCaptionMode(CaptionMode::OriginalOnly);
+    manager.setCaptionsEnabled(true);
+    manager.setShowSourceLabels(true);
+    manager.setSourceDisplayMode(CaptionSourceDisplayMode::CombinedChronological);
+
+    auto mic = sampleSegment();
+    mic.originalText = "The duplicate lesson sentence.";
+    mic.translatedText = "The duplicate lesson sentence.";
+    mic.source = CaptionSource::Microphone;
+    auto system = mic;
+    system.id = "system-preferred";
+    system.source = CaptionSource::SystemAudio;
+
+    const bool micAccepted = manager.addSegment(mic);
+    const bool systemAccepted = manager.addSegment(system);
+    if (!expect(micAccepted && systemAccepted, "System audio should replace a near-duplicate mic caption.")) {
+        return false;
+    }
+    if (!expect(manager.state().latestSegments.size() == 1
+            && manager.state().latestSegments.front().source == CaptionSource::SystemAudio,
+            "Cross-source duplicate should keep the preferred system-audio segment.")) {
+        return false;
+    }
+    if (!expect(manager.currentDisplayText() == "System: The duplicate lesson sentence.",
+            "Cross-source duplicate replacement should update display text.")) {
+        return false;
+    }
+
+    auto micAgain = mic;
+    micAgain.id = "mic-duplicate-again";
+    const bool micAgainAccepted = manager.addSegment(micAgain);
+    return expect(!micAgainAccepted, "Mic duplicate should be suppressed after preferred system audio.")
+        && expect(manager.crossSourceDuplicateSuppressedCount() == 2,
+            "Cross-source duplicate suppression counter should include replacement and later suppression.");
+}
+
 bool testCaptionManager()
 {
     using local_jarvis::caption::CaptionManager;
@@ -143,11 +257,13 @@ bool testCaptionManager()
     manager.setMaxCharacters(120);
     manager.setSourceLanguage("auto");
     manager.setTargetLanguage("en");
+    manager.setShowSourceLabels(false);
     manager.addSegment(sampleSegment());
     manager.addSegment(sampleSegment());
     const auto duplicatesSuppressed = manager.duplicateSuppressedCount();
     const auto storedAfterDuplicate = manager.state().latestSegments.size();
     const auto displayBeforeClear = manager.currentDisplayText();
+    manager.setSourceDisplayMode(local_jarvis::caption::CaptionSourceDisplayMode::SystemOnly);
     manager.clearSegments();
     const auto heldText = manager.currentDisplayText();
 
@@ -159,6 +275,9 @@ bool testCaptionManager()
         && expect(reloaded.loadSettings(), "Reloaded caption settings should load.")
         && expect(reloaded.state().captionMode == CaptionMode::OriginalOnly, "Caption mode did not persist.")
         && expect(!reloaded.state().showSpeaker, "Show speaker setting did not persist.")
+        && expect(!reloaded.state().showSourceLabels, "Show source labels setting did not persist.")
+        && expect(reloaded.state().sourceDisplayMode == local_jarvis::caption::CaptionSourceDisplayMode::SystemOnly,
+            "Caption source display mode did not persist.")
         && expect(reloaded.state().maxLines == 3, "Max lines did not persist.")
         && expect(reloaded.state().maxCharacters == 120, "Max characters did not persist.");
 
@@ -201,6 +320,8 @@ int main()
 {
     const bool ok = testFormattingModes()
         && testLimitsAndFallbacks()
+        && testSourceAwareFormatting()
+        && testCrossSourceDuplicateSuppression()
         && testCaptionManager()
         && testDummyCaptionSource();
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;

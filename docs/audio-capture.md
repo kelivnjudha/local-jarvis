@@ -22,6 +22,8 @@ System audio ASR is controlled separately from microphone ASR. During an active 
 
 Use the desktop Session tab's System Audio Output section to refresh output devices, choose an output device, run a 10-second system audio test, and enable System Audio ASR. The test records local privacy events such as `system_audio_test_started`, `system_audio_test_stopped`, and `system_audio_capture_failed`. ASR records local events such as `system_audio_asr_enabled`, `system_audio_asr_disabled`, `system_audio_asr_chunk_processed`, `system_audio_asr_chunk_skipped_silence`, `system_audio_asr_chunk_skipped_too_quiet`, `system_audio_asr_blank_output`, and `system_audio_asr_error`.
 
+When microphone ASR and system audio ASR are both active, captions can be shown combined chronologically, system-only, mic-only, prefer-system, or prefer-mic. Source labels are stored separately from speaker labels and display as `Mic:` or `System:` by default. Cross-source duplicates are suppressed within the caption duplicate window, with system audio preferred for playback/classroom captions.
+
 ## Diagnostics
 
 The UI shows scalar diagnostics only:

@@ -13,6 +13,8 @@ struct CaptionState {
     std::string sourceLanguage = "auto";
     std::string targetLanguage = "en";
     bool showSpeaker = true;
+    bool showSourceLabels = true;
+    CaptionSourceDisplayMode sourceDisplayMode = CaptionSourceDisplayMode::CombinedChronological;
     int maxLines = 2;
     int maxCharacters = 240;
     int holdMs = 4000;

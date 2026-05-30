@@ -13,6 +13,8 @@ namespace {
 constexpr const char *kCaptionEnabled = "caption.enabled";
 constexpr const char *kCaptionMode = "caption.mode";
 constexpr const char *kShowSpeaker = "caption.show_speaker";
+constexpr const char *kShowSourceLabels = "caption.source_labels.enabled";
+constexpr const char *kSourceDisplayMode = "caption.source_display_mode";
 constexpr const char *kMaxLines = "caption.max_lines";
 constexpr const char *kMaxCharacters = "caption.max_characters";
 constexpr const char *kSourceLanguage = "caption.source_language";
@@ -64,6 +66,19 @@ std::string trimAscii(std::string value)
     return std::string(begin, end);
 }
 
+std::string lowercaseAscii(std::string value)
+{
+    for (char &character : value) {
+        character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+    }
+    return value;
+}
+
+bool isAsciiWordCharacter(unsigned char value)
+{
+    return std::isalnum(value) != 0;
+}
+
 } // namespace
 
 CaptionManager::CaptionManager(storage::Storage *storage)
@@ -113,6 +128,11 @@ std::size_t CaptionManager::duplicateSuppressedCount() const
     return m_duplicateSuppressedCount;
 }
 
+std::size_t CaptionManager::crossSourceDuplicateSuppressedCount() const
+{
+    return m_crossSourceDuplicateSuppressedCount;
+}
+
 bool CaptionManager::loadSettings()
 {
     if (!storageReady()) {
@@ -123,6 +143,8 @@ bool CaptionManager::loadSettings()
     m_state.captionsEnabled = settingBool(kCaptionEnabled, defaults.captionsEnabled);
     m_state.captionMode = captionModeFromString(settingString(kCaptionMode, toString(defaults.captionMode)));
     m_state.showSpeaker = settingBool(kShowSpeaker, defaults.showSpeaker);
+    m_state.showSourceLabels = settingBool(kShowSourceLabels, defaults.showSourceLabels);
+    m_state.sourceDisplayMode = captionSourceDisplayModeFromString(settingString(kSourceDisplayMode, toString(defaults.sourceDisplayMode)));
     m_state.maxLines = clampInt(settingInt(kMaxLines, defaults.maxLines), 1, 8);
     m_state.maxCharacters = clampInt(settingInt(kMaxCharacters, defaults.maxCharacters), 40, 1000);
     m_state.sourceLanguage = settingString(kSourceLanguage, defaults.sourceLanguage);
@@ -149,6 +171,8 @@ bool CaptionManager::saveSettings()
     saveBool(kCaptionEnabled, m_state.captionsEnabled);
     saveString(kCaptionMode, toString(m_state.captionMode));
     saveBool(kShowSpeaker, m_state.showSpeaker);
+    saveBool(kShowSourceLabels, m_state.showSourceLabels);
+    saveString(kSourceDisplayMode, toString(m_state.sourceDisplayMode));
     saveInt(kMaxLines, m_state.maxLines);
     saveInt(kMaxCharacters, m_state.maxCharacters);
     saveString(kSourceLanguage, m_state.sourceLanguage);
@@ -195,6 +219,20 @@ void CaptionManager::setShowSpeaker(bool enabled)
     touchUpdatedAt();
 }
 
+void CaptionManager::setShowSourceLabels(bool enabled)
+{
+    m_state.showSourceLabels = enabled;
+    saveBool(kShowSourceLabels, enabled);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setSourceDisplayMode(CaptionSourceDisplayMode mode)
+{
+    m_state.sourceDisplayMode = mode;
+    saveString(kSourceDisplayMode, toString(mode));
+    touchUpdatedAt();
+}
+
 void CaptionManager::setMaxLines(int maxLines)
 {
     m_state.maxLines = clampInt(maxLines, 1, 8);
@@ -237,22 +275,46 @@ void CaptionManager::setClearOnAsrOff(bool enabled)
     touchUpdatedAt();
 }
 
-void CaptionManager::addSegment(const CaptionSegment &segment)
+bool CaptionManager::addSegment(const CaptionSegment &segment)
 {
-    if (shouldSuppressDuplicate(segment)) {
+    const auto decision = duplicateDecision(segment);
+    if (decision == DuplicateDecision::Suppress) {
         ++m_duplicateSuppressedCount;
+        if (segment.source != m_lastAcceptedSegmentSource) {
+            ++m_crossSourceDuplicateSuppressedCount;
+        }
         touchUpdatedAt();
-        return;
+        return false;
     }
 
-    const std::string textKey = segmentTextKey(segment);
-    if (!textKey.empty()) {
-        m_lastAcceptedSegmentText = textKey;
+    const std::string normalizedKey = normalizedTextKey(segment);
+    if (decision == DuplicateDecision::ReplaceWithPreferredSource) {
+        ++m_duplicateSuppressedCount;
+        ++m_crossSourceDuplicateSuppressedCount;
+        bool replaced = false;
+        for (auto iterator = m_state.latestSegments.rbegin(); iterator != m_state.latestSegments.rend(); ++iterator) {
+            if (isNearDuplicateText(normalizedTextKey(*iterator), normalizedKey)
+                && systemAudioPreferredOver(iterator->source, segment.source)) {
+                *iterator = segment;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            m_state.latestSegments.push_back(segment);
+        }
+    } else {
+        m_state.latestSegments.push_back(segment);
+    }
+
+    if (!normalizedKey.empty()) {
+        m_lastAcceptedSegmentText = normalizedKey;
+        m_lastAcceptedSegmentSource = segment.source;
         m_lastAcceptedSegmentAt = std::chrono::steady_clock::now();
     }
-    m_state.latestSegments.push_back(segment);
     trimLatestSegments();
     touchUpdatedAt();
+    return true;
 }
 
 void CaptionManager::clearSegments()
@@ -335,20 +397,32 @@ void CaptionManager::trimLatestSegments()
     m_state.latestSegments.erase(m_state.latestSegments.begin(), m_state.latestSegments.begin() + static_cast<std::ptrdiff_t>(removeCount));
 }
 
-bool CaptionManager::shouldSuppressDuplicate(const CaptionSegment &segment)
+CaptionManager::DuplicateDecision CaptionManager::duplicateDecision(const CaptionSegment &segment) const
 {
     if (!m_state.suppressDuplicates || m_state.duplicateWindowMs <= 0) {
-        return false;
+        return DuplicateDecision::Accept;
     }
 
-    const std::string textKey = segmentTextKey(segment);
-    if (textKey.empty() || textKey != m_lastAcceptedSegmentText || m_lastAcceptedSegmentAt == std::chrono::steady_clock::time_point {}) {
-        return false;
+    const std::string textKey = normalizedTextKey(segment);
+    if (textKey.empty()
+        || m_lastAcceptedSegmentText.empty()
+        || m_lastAcceptedSegmentAt == std::chrono::steady_clock::time_point {}
+        || !isNearDuplicateText(textKey, m_lastAcceptedSegmentText)) {
+        return DuplicateDecision::Accept;
     }
 
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - m_lastAcceptedSegmentAt).count();
-    return elapsedMs <= m_state.duplicateWindowMs;
+    if (elapsedMs > m_state.duplicateWindowMs) {
+        return DuplicateDecision::Accept;
+    }
+
+    if (segment.source != m_lastAcceptedSegmentSource
+        && systemAudioPreferredOver(m_lastAcceptedSegmentSource, segment.source)) {
+        return DuplicateDecision::ReplaceWithPreferredSource;
+    }
+
+    return DuplicateDecision::Suppress;
 }
 
 std::string CaptionManager::segmentTextKey(const CaptionSegment &segment) const
@@ -360,6 +434,51 @@ std::string CaptionManager::segmentTextKey(const CaptionSegment &segment) const
         return trimAscii(segment.translatedText);
     }
     return trimAscii(segment.summaryText);
+}
+
+std::string CaptionManager::normalizedTextKey(const CaptionSegment &segment) const
+{
+    const std::string text = lowercaseAscii(segmentTextKey(segment));
+    std::string normalized;
+    bool previousWasSpace = false;
+    for (const unsigned char character : text) {
+        if (isAsciiWordCharacter(character)) {
+            normalized.push_back(static_cast<char>(character));
+            previousWasSpace = false;
+        } else if (!previousWasSpace && !normalized.empty()) {
+            normalized.push_back(' ');
+            previousWasSpace = true;
+        }
+    }
+    if (!normalized.empty() && normalized.back() == ' ') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+bool CaptionManager::isNearDuplicateText(const std::string &left, const std::string &right) const
+{
+    if (left.empty() || right.empty()) {
+        return false;
+    }
+    if (left == right) {
+        return true;
+    }
+    const auto shorterLength = std::min(left.size(), right.size());
+    const auto longerLength = std::max(left.size(), right.size());
+    if (shorterLength < 12 || longerLength == 0) {
+        return false;
+    }
+    const double ratio = static_cast<double>(shorterLength) / static_cast<double>(longerLength);
+    if (ratio < 0.82) {
+        return false;
+    }
+    return left.find(right) != std::string::npos || right.find(left) != std::string::npos;
+}
+
+bool CaptionManager::systemAudioPreferredOver(CaptionSource existingSource, CaptionSource nextSource) const
+{
+    return nextSource == CaptionSource::SystemAudio && existingSource != CaptionSource::SystemAudio;
 }
 
 } // namespace local_jarvis::caption

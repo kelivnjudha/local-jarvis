@@ -73,7 +73,9 @@ Do not commit model files to this repo.
 - Transcript text is stored only while an explicit session is active.
 - Standalone microphone and system audio level tests do not store transcripts.
 - Whisper transcript segments use source `microphone_asr_whisper` for microphone audio and `system_audio_asr_whisper` for system audio.
-- Caption speaker labels distinguish sources as `Mic:` and `System:` when speaker labels are enabled.
+- Caption source labels distinguish inputs as `Mic:` and `System:` when source labels are enabled.
+- Caption source display modes are available for combined chronological captions, system-only captions, mic-only captions, prefer-system captions, and prefer-mic captions. The default is combined chronological with source labels on.
+- If microphone and system audio produce the same or nearly same text within the duplicate window, Local Jarvis suppresses the duplicate caption/transcript row and prefers system audio for online class or playback captions.
 
 ## Audio And Caption Quality Settings
 
@@ -93,8 +95,10 @@ These settings are stored in SQLite and can be adjusted by development builds or
 - `caption.suppress_duplicates`, default `true`
 - `caption.duplicate_window_ms`, default `5000`
 - `caption.clear_on_asr_off`, default `false`
+- `caption.source_labels.enabled`, default `true`
+- `caption.source_display_mode`, default `Combined`
 
-Caption display is stabilized by holding the last useful caption briefly, suppressing repeated identical captions within the duplicate window, and avoiding label refresh work when the formatted caption text has not changed.
+Caption display is stabilized by holding the last useful caption briefly, suppressing repeated identical captions within the duplicate window, suppressing cross-source duplicates, and avoiding label refresh work when the formatted caption text has not changed.
 
 ## Local Events
 
@@ -115,4 +119,4 @@ Audio and ASR optimization paths write local diagnostic events only. They do not
 
 ## Privacy Boundary
 
-ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, screen capture, OCR, or background transcription. Microphone and system audio are processed in memory and dropped; only transcript text from active sessions is stored in SQLite.
+ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, screen capture, OCR, or background transcription. Microphone and system audio are processed in memory and dropped; only non-empty, non-blank, non-duplicate transcript text from active sessions is stored in SQLite.

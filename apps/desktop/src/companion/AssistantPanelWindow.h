@@ -40,7 +40,9 @@ private:
     void setPanelVisible(bool visible);
     [[nodiscard]] local_jarvis::companion::CompanionMode selectedMode() const;
     [[nodiscard]] local_jarvis::caption::CaptionMode selectedCaptionMode() const;
+    [[nodiscard]] local_jarvis::caption::CaptionSourceDisplayMode selectedSourceDisplayMode() const;
     [[nodiscard]] int captionModeIndex(local_jarvis::caption::CaptionMode mode) const;
+    [[nodiscard]] int sourceDisplayModeIndex(local_jarvis::caption::CaptionSourceDisplayMode mode) const;
 
     local_jarvis::companion::CompanionManager &m_companionManager;
     local_jarvis::caption::CaptionManager &m_captionManager;
@@ -48,6 +50,8 @@ private:
     QComboBox *m_captionModeCombo = nullptr;
     QCheckBox *m_captionsCheck = nullptr;
     QCheckBox *m_showSpeakerCheck = nullptr;
+    QCheckBox *m_showSourceLabelsCheck = nullptr;
+    QComboBox *m_sourceDisplayModeCombo = nullptr;
     QCheckBox *m_translationCheck = nullptr;
     QCheckBox *m_microphoneCheck = nullptr;
     QCheckBox *m_asrCheck = nullptr;

@@ -57,6 +57,8 @@ void AssistantPanelWindow::applyState()
     const QSignalBlocker captionModeBlocker(m_captionModeCombo);
     const QSignalBlocker captionsBlocker(m_captionsCheck);
     const QSignalBlocker showSpeakerBlocker(m_showSpeakerCheck);
+    const QSignalBlocker showSourceLabelsBlocker(m_showSourceLabelsCheck);
+    const QSignalBlocker sourceDisplayModeBlocker(m_sourceDisplayModeCombo);
     const QSignalBlocker translationBlocker(m_translationCheck);
     const QSignalBlocker microphoneBlocker(m_microphoneCheck);
     const QSignalBlocker asrBlocker(m_asrCheck);
@@ -74,6 +76,13 @@ void AssistantPanelWindow::applyState()
     }
     if (m_showSpeakerCheck->isChecked() != captionState.showSpeaker) {
         m_showSpeakerCheck->setChecked(captionState.showSpeaker);
+    }
+    if (m_showSourceLabelsCheck->isChecked() != captionState.showSourceLabels) {
+        m_showSourceLabelsCheck->setChecked(captionState.showSourceLabels);
+    }
+    const int sourceDisplayMode = sourceDisplayModeIndex(captionState.sourceDisplayMode);
+    if (m_sourceDisplayModeCombo->currentIndex() != sourceDisplayMode) {
+        m_sourceDisplayModeCombo->setCurrentIndex(sourceDisplayMode);
     }
     if (m_translationCheck->isChecked() != state.translationEnabled) {
         m_translationCheck->setChecked(state.translationEnabled);
@@ -189,6 +198,14 @@ void AssistantPanelWindow::buildUi()
 
     m_captionsCheck = new QCheckBox("Captions", this);
     m_showSpeakerCheck = new QCheckBox("Show speaker", this);
+    m_showSourceLabelsCheck = new QCheckBox("Show source", this);
+    m_sourceDisplayModeCombo = new QComboBox(this);
+    m_sourceDisplayModeCombo->setAccessibleName("Caption source display mode");
+    m_sourceDisplayModeCombo->addItem("Combined");
+    m_sourceDisplayModeCombo->addItem("System only");
+    m_sourceDisplayModeCombo->addItem("Mic only");
+    m_sourceDisplayModeCombo->addItem("Prefer system");
+    m_sourceDisplayModeCombo->addItem("Prefer mic");
     m_translationCheck = new QCheckBox("Translation", this);
     m_microphoneCheck = new QCheckBox("Microphone", this);
     m_microphoneCheck->setAccessibleName("Assistant microphone toggle");
@@ -196,6 +213,8 @@ void AssistantPanelWindow::buildUi()
     m_asrCheck->setAccessibleName("Assistant ASR transcription toggle");
     rootLayout->addWidget(m_captionsCheck);
     rootLayout->addWidget(m_showSpeakerCheck);
+    rootLayout->addWidget(m_showSourceLabelsCheck);
+    rootLayout->addWidget(m_sourceDisplayModeCombo);
     rootLayout->addWidget(m_translationCheck);
     rootLayout->addWidget(m_microphoneCheck);
     rootLayout->addWidget(m_asrCheck);
@@ -252,6 +271,20 @@ void AssistantPanelWindow::connectSignals()
 
     connect(m_showSpeakerCheck, &QCheckBox::toggled, this, [this](bool checked) {
         m_captionManager.setShowSpeaker(checked);
+        if (m_changedCallback) {
+            m_changedCallback();
+        }
+    });
+
+    connect(m_showSourceLabelsCheck, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setShowSourceLabels(checked);
+        if (m_changedCallback) {
+            m_changedCallback();
+        }
+    });
+
+    connect(m_sourceDisplayModeCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        m_captionManager.setSourceDisplayMode(selectedSourceDisplayMode());
         if (m_changedCallback) {
             m_changedCallback();
         }
@@ -381,6 +414,23 @@ local_jarvis::caption::CaptionMode AssistantPanelWindow::selectedCaptionMode() c
     }
 }
 
+local_jarvis::caption::CaptionSourceDisplayMode AssistantPanelWindow::selectedSourceDisplayMode() const
+{
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+    switch (m_sourceDisplayModeCombo->currentIndex()) {
+    case 1:
+        return CaptionSourceDisplayMode::SystemOnly;
+    case 2:
+        return CaptionSourceDisplayMode::MicrophoneOnly;
+    case 3:
+        return CaptionSourceDisplayMode::PreferSystemAudio;
+    case 4:
+        return CaptionSourceDisplayMode::PreferMicrophone;
+    default:
+        return CaptionSourceDisplayMode::CombinedChronological;
+    }
+}
+
 int AssistantPanelWindow::captionModeIndex(local_jarvis::caption::CaptionMode mode) const
 {
     using local_jarvis::caption::CaptionMode;
@@ -397,4 +447,22 @@ int AssistantPanelWindow::captionModeIndex(local_jarvis::caption::CaptionMode mo
         return 4;
     }
     return 3;
+}
+
+int AssistantPanelWindow::sourceDisplayModeIndex(local_jarvis::caption::CaptionSourceDisplayMode mode) const
+{
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+    switch (mode) {
+    case CaptionSourceDisplayMode::CombinedChronological:
+        return 0;
+    case CaptionSourceDisplayMode::SystemOnly:
+        return 1;
+    case CaptionSourceDisplayMode::MicrophoneOnly:
+        return 2;
+    case CaptionSourceDisplayMode::PreferSystemAudio:
+        return 3;
+    case CaptionSourceDisplayMode::PreferMicrophone:
+        return 4;
+    }
+    return 0;
 }

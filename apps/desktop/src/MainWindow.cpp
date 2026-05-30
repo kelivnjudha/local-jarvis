@@ -165,6 +165,41 @@ local_jarvis::caption::CaptionMode captionModeFromIndex(int index)
     }
 }
 
+int captionSourceDisplayModeIndex(local_jarvis::caption::CaptionSourceDisplayMode mode)
+{
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+    switch (mode) {
+    case CaptionSourceDisplayMode::CombinedChronological:
+        return 0;
+    case CaptionSourceDisplayMode::SystemOnly:
+        return 1;
+    case CaptionSourceDisplayMode::MicrophoneOnly:
+        return 2;
+    case CaptionSourceDisplayMode::PreferSystemAudio:
+        return 3;
+    case CaptionSourceDisplayMode::PreferMicrophone:
+        return 4;
+    }
+    return 0;
+}
+
+local_jarvis::caption::CaptionSourceDisplayMode captionSourceDisplayModeFromIndex(int index)
+{
+    using local_jarvis::caption::CaptionSourceDisplayMode;
+    switch (index) {
+    case 1:
+        return CaptionSourceDisplayMode::SystemOnly;
+    case 2:
+        return CaptionSourceDisplayMode::MicrophoneOnly;
+    case 3:
+        return CaptionSourceDisplayMode::PreferSystemAudio;
+    case 4:
+        return CaptionSourceDisplayMode::PreferMicrophone;
+    default:
+        return CaptionSourceDisplayMode::CombinedChronological;
+    }
+}
+
 QString languageDisplay(const std::string &language)
 {
     if (language == "auto") {
@@ -630,6 +665,21 @@ void MainWindow::buildUi()
     m_captionShowSpeakerCheckBox->setAccessibleName("Show speaker labels");
     captionLayout->addWidget(m_captionShowSpeakerCheckBox);
 
+    auto *captionSourceLayout = new QHBoxLayout();
+    m_captionShowSourceLabelsCheckBox = new QCheckBox("Show source labels", captionGroup);
+    m_captionShowSourceLabelsCheckBox->setAccessibleName("Show caption source labels");
+    m_captionSourceDisplayModeCombo = new QComboBox(captionGroup);
+    m_captionSourceDisplayModeCombo->setAccessibleName("Caption source display mode");
+    m_captionSourceDisplayModeCombo->addItem("Combined");
+    m_captionSourceDisplayModeCombo->addItem("System only");
+    m_captionSourceDisplayModeCombo->addItem("Mic only");
+    m_captionSourceDisplayModeCombo->addItem("Prefer system");
+    m_captionSourceDisplayModeCombo->addItem("Prefer mic");
+    captionSourceLayout->addWidget(m_captionShowSourceLabelsCheckBox);
+    captionSourceLayout->addWidget(m_captionSourceDisplayModeCombo);
+    captionSourceLayout->addStretch();
+    captionLayout->addLayout(captionSourceLayout);
+
     auto *captionLimitLayout = new QHBoxLayout();
     m_captionMaxLinesSpinBox = new QSpinBox(captionGroup);
     m_captionMaxLinesSpinBox->setAccessibleName("Caption max lines");
@@ -721,6 +771,12 @@ void MainWindow::connectSignals()
         }
 
         m_lastStoppedSessionId.reset();
+        m_lastStoredAsrText.clear();
+        m_lastStoredAsrTextKey.clear();
+        m_lastStoredAsrSource.clear();
+        m_lastStoredAsrAudioSource = local_jarvis::asr::AsrAudioSource::Microphone;
+        m_lastStoredAsrId.reset();
+        m_lastStoredAsrAt = std::chrono::steady_clock::time_point {};
         if (result.session.has_value()) {
             m_audioChunkBuffer.reset(result.session->id);
             m_systemAudioChunkBuffer.reset(result.session->id);
@@ -981,6 +1037,16 @@ void MainWindow::connectSignals()
 
     connect(m_captionShowSpeakerCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
         m_captionManager.setShowSpeaker(checked);
+        applyCompanionState();
+    });
+
+    connect(m_captionShowSourceLabelsCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setShowSourceLabels(checked);
+        applyCompanionState();
+    });
+
+    connect(m_captionSourceDisplayModeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        m_captionManager.setSourceDisplayMode(captionSourceDisplayModeFromIndex(index));
         applyCompanionState();
     });
 
@@ -2287,22 +2353,29 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
 
     const std::string transcriptSource = currentAsrTranscriptSource(sanitizedSegment.audioSource);
     const auto now = std::chrono::steady_clock::now();
-    if (sanitizedSegment.isFinal
-        && sanitizedSegment.text == m_lastStoredAsrText
-        && transcriptSource == m_lastStoredAsrSource
-        && m_lastStoredAsrAt != std::chrono::steady_clock::time_point {}
-        && std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastStoredAsrAt).count() <= 5000) {
+    bool replacePreviousStoredWithSystemAudio = false;
+    const bool suppressStoredDuplicate = sanitizedSegment.isFinal
+        && shouldSuppressStoredAsrDuplicate(sanitizedSegment, transcriptSource, replacePreviousStoredWithSystemAudio);
+
+    const bool captionAccepted = m_captionManager.addSegment(local_jarvis::asr::toCaptionSegment(sanitizedSegment));
+    if (suppressStoredDuplicate && !captionAccepted) {
         ++m_asrDuplicateTranscriptSuppressed;
         recordAsrEvent("asr_duplicate_suppressed", transcriptSource + ": " + sanitizedSegment.text, sanitizedSegment.sessionId);
         refreshStatus();
         return;
     }
 
-    m_captionManager.addSegment(local_jarvis::asr::toCaptionSegment(sanitizedSegment));
     if (m_captionBubbleWindow) {
         m_captionBubbleWindow->setMicrophonePlaceholderText("");
         m_captionBubbleWindow->refreshCaptionText();
         m_captionBubbleWindow->applyState();
+    }
+
+    if (suppressStoredDuplicate) {
+        ++m_asrDuplicateTranscriptSuppressed;
+        recordAsrEvent("asr_duplicate_suppressed", transcriptSource + ": " + sanitizedSegment.text, sanitizedSegment.sessionId);
+        refreshStatus();
+        return;
     }
 
     appendTranscriptLine(local_jarvis::audio::TranscriptEvent {
@@ -2330,6 +2403,19 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
 
     const auto currentSessionId = m_sessionManager ? m_sessionManager->currentSessionId() : std::nullopt;
     if (sanitizedSegment.isFinal && currentSessionId.has_value() && *currentSessionId == sanitizedSegment.sessionId) {
+        if (replacePreviousStoredWithSystemAudio && m_lastStoredAsrId.has_value()) {
+            ++m_asrDuplicateTranscriptSuppressed;
+            recordAsrEvent(
+                "asr_duplicate_suppressed",
+                "Replacing duplicate microphone transcript with system audio: " + sanitizedSegment.text,
+                sanitizedSegment.sessionId);
+            if (!m_storage.deleteTranscriptSegment(*m_lastStoredAsrId)) {
+                recordAsrEvent(
+                    "asr_duplicate_suppressed",
+                    "Could not remove preferred-source duplicate predecessor: " + m_storage.lastError(),
+                    sanitizedSegment.sessionId);
+            }
+        }
         const auto storedId = m_storage.addTranscriptSegment(local_jarvis::storage::TranscriptSegmentInput {
             .sessionId = sanitizedSegment.sessionId,
             .startMs = sanitizedSegment.startMs,
@@ -2347,7 +2433,10 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
                 sanitizedSegment.sessionId);
         } else {
             m_lastStoredAsrText = sanitizedSegment.text;
+            m_lastStoredAsrTextKey = normalizedTranscriptKey(sanitizedSegment.text);
             m_lastStoredAsrSource = transcriptSource;
+            m_lastStoredAsrAudioSource = sanitizedSegment.audioSource;
+            m_lastStoredAsrId = storedId;
             m_lastStoredAsrAt = now;
         }
     }
@@ -2786,6 +2875,80 @@ std::string MainWindow::currentAsrTranscriptSource(local_jarvis::asr::AsrAudioSo
     return local_jarvis::asr::transcriptSourceFor(m_asrBackend, source);
 }
 
+std::string MainWindow::normalizedTranscriptKey(const std::string &text) const
+{
+    const std::string lowercase = lowercaseAscii(trimAscii(text));
+    std::string normalized;
+    bool previousWasSpace = false;
+    for (const unsigned char character : lowercase) {
+        if (std::isalnum(character) != 0) {
+            normalized.push_back(static_cast<char>(character));
+            previousWasSpace = false;
+        } else if (!previousWasSpace && !normalized.empty()) {
+            normalized.push_back(' ');
+            previousWasSpace = true;
+        }
+    }
+    if (!normalized.empty() && normalized.back() == ' ') {
+        normalized.pop_back();
+    }
+    return normalized;
+}
+
+bool MainWindow::isNearTranscriptDuplicate(const std::string &left, const std::string &right) const
+{
+    if (left.empty() || right.empty()) {
+        return false;
+    }
+    if (left == right) {
+        return true;
+    }
+
+    const auto shorterLength = std::min(left.size(), right.size());
+    const auto longerLength = std::max(left.size(), right.size());
+    if (shorterLength < 12 || longerLength == 0) {
+        return false;
+    }
+    const double ratio = static_cast<double>(shorterLength) / static_cast<double>(longerLength);
+    if (ratio < 0.82) {
+        return false;
+    }
+    return left.find(right) != std::string::npos || right.find(left) != std::string::npos;
+}
+
+bool MainWindow::shouldSuppressStoredAsrDuplicate(
+    const local_jarvis::asr::AsrTranscriptSegment &segment,
+    const std::string &transcriptSource,
+    bool &replacePreviousWithSystemAudio) const
+{
+    replacePreviousWithSystemAudio = false;
+    const std::string textKey = normalizedTranscriptKey(segment.text);
+    if (textKey.empty()
+        || m_lastStoredAsrTextKey.empty()
+        || m_lastStoredAsrAt == std::chrono::steady_clock::time_point {}
+        || !isNearTranscriptDuplicate(textKey, m_lastStoredAsrTextKey)) {
+        return false;
+    }
+
+    const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - m_lastStoredAsrAt).count();
+    if (elapsedMs > 5000) {
+        return false;
+    }
+
+    if (segment.audioSource == local_jarvis::asr::AsrAudioSource::SystemAudio
+        && m_lastStoredAsrAudioSource != local_jarvis::asr::AsrAudioSource::SystemAudio) {
+        replacePreviousWithSystemAudio = true;
+        return false;
+    }
+
+    if (segment.audioSource != m_lastStoredAsrAudioSource) {
+        return true;
+    }
+
+    return segment.audioSource == m_lastStoredAsrAudioSource || transcriptSource == m_lastStoredAsrSource;
+}
+
 bool MainWindow::sessionActive() const
 {
     return m_sessionManager
@@ -2902,37 +3065,43 @@ void MainWindow::refreshStatus()
         m_whisperStatusLabel->setText(whisperStatusText());
     }
     if (m_asrStatsLabel) {
+        const auto &microphoneStats = asrStats.microphone;
         const bool asrChunkTooQuiet = m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
             && asrStats.lastChunkId > 0
             && asrStats.lastChunkRms > 0.0
             && asrStats.lastChunkRms < m_asrQuietRmsThreshold;
         QString statsText = QString(
-            "Chunks queued: %1 | handled: %2 | pending: %3\n"
+            "Mic chunks queued: %1 | handled: %2 | pending: %3\n"
             "Last chunk: id %4 | %5 ms | input %6 Hz/%7 ch/%8 samples | Whisper samples: %9\n"
             "Last chunk RMS: %10 (%11) | peak: %12 (%13) | non-zero: %14 | silent: %15 | %16")
+            .arg(QString::number(microphoneStats.chunksQueued),
+                 QString::number(microphoneStats.chunksProcessed),
+                 QString::number(microphoneStats.pendingChunks),
+                 QString::number(microphoneStats.lastChunkId),
+                 QString::number(microphoneStats.lastChunkDurationMs),
+                 QString::number(microphoneStats.lastChunkSampleRate),
+                 QString::number(microphoneStats.lastChunkChannels),
+                 QString::number(microphoneStats.lastChunkInputSamples),
+                 QString::number(microphoneStats.lastWhisperSampleCount),
+                 QString::number(microphoneStats.lastChunkRms, 'f', 4),
+                 dbfsText(microphoneStats.lastChunkDbfs),
+                 QString::number(microphoneStats.lastChunkPeak, 'f', 4),
+                 dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(microphoneStats.lastChunkPeak)),
+                 percentText(microphoneStats.lastChunkNonZeroRatio),
+                 microphoneStats.lastChunkTreatedAsSilent ? "yes" : "no",
+                 levelQualityText(microphoneStats.lastChunkRms, microphoneStats.lastChunkPeak));
+        statsText += QString("\nMic detector: %1 | skipped silence: %2 | skipped too quiet: %3 | blank outputs: %4")
+            .arg(microphoneStats.lastSpeechDetectionState.empty() ? "none" : QString::fromStdString(microphoneStats.lastSpeechDetectionState),
+                 QString::number(microphoneStats.chunksSkippedSilence),
+                 QString::number(microphoneStats.chunksSkippedTooQuiet),
+                 QString::number(microphoneStats.blankOutputs));
+        statsText += QString("\nTotal chunks queued: %1 | handled: %2 | pending: %3")
             .arg(QString::number(asrStats.chunksQueued),
                  QString::number(asrStats.chunksProcessed),
-                 QString::number(asrStats.pendingChunks),
-                 QString::number(asrStats.lastChunkId),
-                 QString::number(asrStats.lastChunkDurationMs),
-                 QString::number(asrStats.lastChunkSampleRate),
-                 QString::number(asrStats.lastChunkChannels),
-                 QString::number(asrStats.lastChunkInputSamples),
-                 QString::number(asrStats.lastWhisperSampleCount),
-                 QString::number(asrStats.lastChunkRms, 'f', 4),
-                 dbfsText(asrStats.lastChunkDbfs),
-                 QString::number(asrStats.lastChunkPeak, 'f', 4),
-                 dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(asrStats.lastChunkPeak)),
-                 percentText(asrStats.lastChunkNonZeroRatio),
-                 asrStats.lastChunkTreatedAsSilent ? "yes" : "no",
-                 levelQualityText(asrStats.lastChunkRms, asrStats.lastChunkPeak));
-        statsText += QString("\nDetector: %1 | skipped silence: %2 | skipped too quiet: %3 | blank outputs: %4")
-            .arg(asrStats.lastSpeechDetectionState.empty() ? "none" : QString::fromStdString(asrStats.lastSpeechDetectionState),
-                 QString::number(asrStats.chunksSkippedSilence),
-                 QString::number(asrStats.chunksSkippedTooQuiet),
-                 QString::number(asrStats.blankOutputs));
-        statsText += QString("\nDuplicates suppressed: captions %1 | transcripts %2")
+                 QString::number(asrStats.pendingChunks));
+        statsText += QString("\nDuplicates suppressed: captions %1 | cross-source %2 | transcripts %3")
             .arg(QString::number(m_captionManager.duplicateSuppressedCount()),
+                 QString::number(m_captionManager.crossSourceDuplicateSuppressedCount()),
                  QString::number(m_asrDuplicateTranscriptSuppressed));
         statsText += QString("\nPreprocessing: %1 | last gain: %2 dB | limiter: %3")
             .arg(asrStats.preprocessingEnabled ? "enabled" : "disabled",
@@ -2957,13 +3126,15 @@ void MainWindow::refreshStatus()
         QString systemStatsText = QString(
             "System chunks queued: %1 | handled: %2 | pending: %3\n"
             "Skipped silence: %4 | too quiet: %5 | blank outputs: %6\n"
-            "Last system chunk: id %7 | %8 ms | %9 Hz/%10 ch | RMS %11 (%12) | peak %13 | %14")
+            "Cross-source duplicates suppressed: %7\n"
+            "Last system chunk: id %8 | %9 ms | %10 Hz/%11 ch | RMS %12 (%13) | peak %14 | %15")
             .arg(QString::number(systemStats.chunksQueued),
                  QString::number(systemStats.chunksProcessed),
                  QString::number(systemStats.pendingChunks),
                  QString::number(systemStats.chunksSkippedSilence),
                  QString::number(systemStats.chunksSkippedTooQuiet),
                  QString::number(systemStats.blankOutputs),
+                 QString::number(m_captionManager.crossSourceDuplicateSuppressedCount()),
                  QString::number(systemStats.lastChunkId),
                  QString::number(systemStats.lastChunkDurationMs),
                  QString::number(systemStats.lastChunkSampleRate),
@@ -3214,15 +3385,17 @@ void MainWindow::refreshCompanionSettings()
     m_companionStatusLabel->setText(QString(
         "Robot: Always visible | Assistant Panel: %1\n"
         "Mode: %2\n"
-        "Captions: %3 (%4) | Translation: %5 | Mic: %6\n"
-        "Robot position: %7, %8 | Scale: %9%\n"
-        "Caption position: %10, %11 | Size: %12 x %13 | %14\n"
-        "Theme: %15 | Outfit: %16 | Accessory: %17\n"
-        "Animation: %18 | Motion: %19 | Always on top: %20")
+        "Captions: %3 (%4, %5) | Sources: %6 | Translation: %7 | Mic: %8\n"
+        "Robot position: %9, %10 | Scale: %11%\n"
+        "Caption position: %12, %13 | Size: %14 x %15 | %16\n"
+        "Theme: %17 | Outfit: %18 | Accessory: %19\n"
+        "Animation: %20 | Motion: %21 | Always on top: %22")
         .arg(state.panelVisible ? "Open" : "Closed",
              QString::fromStdString(profile.displayName),
              enabledText(captionState.captionsEnabled && state.captionsVisible),
              QString::fromStdString(local_jarvis::caption::displayName(captionState.captionMode)),
+             QString::fromStdString(local_jarvis::caption::displayName(captionState.sourceDisplayMode)),
+             enabledText(captionState.showSourceLabels),
              enabledText(state.translationEnabled),
              state.microphoneEnabled ? "ON" : "OFF",
              QString::number(state.anchorX),
@@ -3268,6 +3441,8 @@ void MainWindow::refreshCaptionSettings()
     const auto &companionState = m_companionManager.state();
     const QSignalBlocker modeBlocker(m_captionModeCombo);
     const QSignalBlocker speakerBlocker(m_captionShowSpeakerCheckBox);
+    const QSignalBlocker sourceLabelsBlocker(m_captionShowSourceLabelsCheckBox);
+    const QSignalBlocker sourceModeBlocker(m_captionSourceDisplayModeCombo);
     const QSignalBlocker linesBlocker(m_captionMaxLinesSpinBox);
     const QSignalBlocker charactersBlocker(m_captionMaxCharactersSpinBox);
     const QSignalBlocker sourceBlocker(m_captionSourceLanguageEdit);
@@ -3280,6 +3455,8 @@ void MainWindow::refreshCaptionSettings()
 
     m_captionModeCombo->setCurrentIndex(captionModeIndex(state.captionMode));
     m_captionShowSpeakerCheckBox->setChecked(state.showSpeaker);
+    m_captionShowSourceLabelsCheckBox->setChecked(state.showSourceLabels);
+    m_captionSourceDisplayModeCombo->setCurrentIndex(captionSourceDisplayModeIndex(state.sourceDisplayMode));
     m_captionMaxLinesSpinBox->setValue(state.maxLines);
     m_captionMaxCharactersSpinBox->setValue(state.maxCharacters);
     m_captionSourceLanguageEdit->setText(QString::fromStdString(state.sourceLanguage));

@@ -58,6 +58,10 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm summary text is shown.
 - Toggle speaker labels.
 - Confirm speaker labels hide and reappear.
+- Toggle source labels.
+- Confirm `Mic:` and `System:` source labels hide and reappear independently from speaker labels.
+- Change caption source display mode to Combined, System only, Mic only, Prefer system, and Prefer mic.
+- Confirm the caption bubble filters or prefers the selected source without hiding the companion or assistant panel.
 - Adjust caption max lines and max characters in Settings.
 - Confirm caption output respects the limits and settings persist after restart.
 - Toggle translation.
@@ -172,7 +176,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - With Stub backend selected, play local audio through the selected output device.
 - Confirm system audio diagnostics show non-zero playback levels.
 - Confirm System Audio ASR counters update for queued/handled chunks.
-- Confirm the caption bubble shows stub transcript text with a `System:` speaker label when speaker labels are enabled.
+- Confirm the caption bubble shows stub transcript text with a `System:` source label when source labels are enabled.
 - Confirm the Transcript panel shows the same stub system transcript segment.
 - Confirm SQLite stores a transcript segment with source `system_audio_asr_stub`.
 - Confirm skipped silence, too-quiet chunks, and blank output counters are visible and do not flicker blank captions.
@@ -181,7 +185,11 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Stop the session.
 - Confirm system audio ASR and loopback capture stop cleanly.
 - Enable microphone ASR separately.
-- Confirm microphone ASR still stores `microphone_asr_stub` or `microphone_asr_whisper` and uses the `Mic:` caption label.
+- Confirm microphone ASR still stores `microphone_asr_stub` or `microphone_asr_whisper` and uses the `Mic:` source label.
+- Enable microphone ASR and System Audio ASR together with the Stub backend.
+- Confirm Combined mode shows both sources chronologically and the Mic-only/System-only modes filter correctly.
+- If both sources emit the same or nearly same text, confirm the cross-source duplicate suppression counter increments or rely on the automated test coverage for that path.
+- Confirm duplicate cross-source rows are not stored and system audio remains the preferred row for duplicate playback captions.
 - Close the app while system audio capture or ASR is active.
 - Confirm the app exits cleanly.
 - Confirm no raw audio files are created in the repo, build directories, or app data.

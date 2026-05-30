@@ -481,6 +481,42 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     return id;
 }
 
+bool Storage::deleteTranscriptSegment(const std::string &segmentId)
+{
+    std::lock_guard lock(m_mutex);
+    if (!isOpen()) {
+        m_lastError = "Database is not open.";
+        return false;
+    }
+
+    constexpr const char *sql = "DELETE FROM transcript_segments WHERE id = ?;";
+    sqlite3_stmt *statement = nullptr;
+    if (sqlite3_prepare_v2(m_database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        setLastSqliteError("Failed to prepare delete transcript segment statement");
+        return false;
+    }
+
+    bindText(statement, 1, segmentId);
+    const bool ok = bindAndStep(statement);
+    sqlite3_finalize(statement);
+    if (!ok) {
+        return false;
+    }
+
+    if (m_ftsAvailable) {
+        sqlite3_stmt *ftsStatement = nullptr;
+        constexpr const char *ftsSql = "DELETE FROM transcript_fts WHERE id = ?;";
+        if (sqlite3_prepare_v2(m_database, ftsSql, -1, &ftsStatement, nullptr) == SQLITE_OK) {
+            bindText(ftsStatement, 1, segmentId);
+            sqlite3_step(ftsStatement);
+            sqlite3_finalize(ftsStatement);
+        }
+    }
+
+    m_lastError.clear();
+    return true;
+}
+
 std::optional<std::string> Storage::addScreenOcrSegment(const ScreenOcrSegmentInput &segment)
 {
     std::lock_guard lock(m_mutex);
