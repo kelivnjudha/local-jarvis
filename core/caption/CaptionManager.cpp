@@ -23,6 +23,11 @@ constexpr const char *kHoldMs = "caption.hold_ms";
 constexpr const char *kSuppressDuplicates = "caption.suppress_duplicates";
 constexpr const char *kDuplicateWindowMs = "caption.duplicate_window_ms";
 constexpr const char *kClearOnAsrOff = "caption.clear_on_asr_off";
+constexpr const char *kCleaningEnabled = "caption.cleaning.enabled";
+constexpr const char *kMergeShortSegments = "caption.merge_short_segments";
+constexpr const char *kMergeMaxGapMs = "caption.merge_max_gap_ms";
+constexpr const char *kMergeMaxCharacters = "caption.merge_max_characters";
+constexpr const char *kAutoPunctuationLight = "caption.auto_punctuation_light";
 
 std::string boolText(bool value)
 {
@@ -103,6 +108,8 @@ std::string CaptionManager::currentDisplayText() const
     if (!formatted.empty()) {
         if (formatted != m_lastDisplayText) {
             m_lastDisplayText = formatted;
+        } else {
+            ++m_qualityStats.displayRefreshesSkipped;
         }
         m_lastUsefulDisplayAt = now;
         return formatted;
@@ -118,6 +125,7 @@ std::string CaptionManager::currentDisplayText() const
 
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUsefulDisplayAt).count();
     if (elapsedMs <= m_state.holdMs) {
+        ++m_qualityStats.displayRefreshesSkipped;
         return m_lastDisplayText;
     }
     return {};
@@ -125,12 +133,28 @@ std::string CaptionManager::currentDisplayText() const
 
 std::size_t CaptionManager::duplicateSuppressedCount() const
 {
-    return m_duplicateSuppressedCount;
+    return m_qualityStats.duplicateCaptionsSuppressed;
 }
 
 std::size_t CaptionManager::crossSourceDuplicateSuppressedCount() const
 {
-    return m_crossSourceDuplicateSuppressedCount;
+    return m_qualityStats.crossSourceDuplicatesSuppressed;
+}
+
+CaptionQualityStats CaptionManager::qualityStats() const
+{
+    return m_qualityStats;
+}
+
+std::string CaptionManager::cleanTranscriptText(const std::string &text) const
+{
+    const auto result = m_cleaner.cleanText(text, cleanerOptions());
+    return result.rejected ? std::string {} : result.text;
+}
+
+bool CaptionManager::isNonContentText(const std::string &text) const
+{
+    return m_cleaner.isNonContentToken(text);
 }
 
 bool CaptionManager::loadSettings()
@@ -153,6 +177,11 @@ bool CaptionManager::loadSettings()
     m_state.suppressDuplicates = settingBool(kSuppressDuplicates, defaults.suppressDuplicates);
     m_state.duplicateWindowMs = clampInt(settingInt(kDuplicateWindowMs, defaults.duplicateWindowMs), 0, 60000);
     m_state.clearOnAsrOff = settingBool(kClearOnAsrOff, defaults.clearOnAsrOff);
+    m_state.cleaningEnabled = settingBool(kCleaningEnabled, defaults.cleaningEnabled);
+    m_state.mergeShortSegments = settingBool(kMergeShortSegments, defaults.mergeShortSegments);
+    m_state.mergeMaxGapMs = clampInt(settingInt(kMergeMaxGapMs, defaults.mergeMaxGapMs), 0, 30000);
+    m_state.mergeMaxCharacters = clampInt(settingInt(kMergeMaxCharacters, defaults.mergeMaxCharacters), 40, 1000);
+    m_state.autoPunctuationLight = settingBool(kAutoPunctuationLight, defaults.autoPunctuationLight);
     if (m_state.sourceLanguage.empty()) {
         m_state.sourceLanguage = defaults.sourceLanguage;
     }
@@ -181,6 +210,11 @@ bool CaptionManager::saveSettings()
     saveBool(kSuppressDuplicates, m_state.suppressDuplicates);
     saveInt(kDuplicateWindowMs, m_state.duplicateWindowMs);
     saveBool(kClearOnAsrOff, m_state.clearOnAsrOff);
+    saveBool(kCleaningEnabled, m_state.cleaningEnabled);
+    saveBool(kMergeShortSegments, m_state.mergeShortSegments);
+    saveInt(kMergeMaxGapMs, m_state.mergeMaxGapMs);
+    saveInt(kMergeMaxCharacters, m_state.mergeMaxCharacters);
+    saveBool(kAutoPunctuationLight, m_state.autoPunctuationLight);
     return true;
 }
 
@@ -275,42 +309,93 @@ void CaptionManager::setClearOnAsrOff(bool enabled)
     touchUpdatedAt();
 }
 
+void CaptionManager::setCleaningEnabled(bool enabled)
+{
+    m_state.cleaningEnabled = enabled;
+    saveBool(kCleaningEnabled, enabled);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setMergeShortSegments(bool enabled)
+{
+    m_state.mergeShortSegments = enabled;
+    saveBool(kMergeShortSegments, enabled);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setMergeMaxGapMs(int maxGapMs)
+{
+    m_state.mergeMaxGapMs = clampInt(maxGapMs, 0, 30000);
+    saveInt(kMergeMaxGapMs, m_state.mergeMaxGapMs);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setMergeMaxCharacters(int maxCharacters)
+{
+    m_state.mergeMaxCharacters = clampInt(maxCharacters, 40, 1000);
+    saveInt(kMergeMaxCharacters, m_state.mergeMaxCharacters);
+    touchUpdatedAt();
+}
+
+void CaptionManager::setAutoPunctuationLight(bool enabled)
+{
+    m_state.autoPunctuationLight = enabled;
+    saveBool(kAutoPunctuationLight, enabled);
+    touchUpdatedAt();
+}
+
+void CaptionManager::recordRejectedCaption()
+{
+    ++m_qualityStats.captionsRejected;
+    touchUpdatedAt();
+}
+
 bool CaptionManager::addSegment(const CaptionSegment &segment)
 {
-    const auto decision = duplicateDecision(segment);
+    const auto cleanedSegment = m_cleaner.cleanSegment(segment, cleanerOptions());
+    if (!cleanedSegment.has_value()) {
+        ++m_qualityStats.captionsRejected;
+        touchUpdatedAt();
+        return false;
+    }
+
+    const auto decision = duplicateDecision(*cleanedSegment);
     if (decision == DuplicateDecision::Suppress) {
-        ++m_duplicateSuppressedCount;
-        if (segment.source != m_lastAcceptedSegmentSource) {
-            ++m_crossSourceDuplicateSuppressedCount;
+        ++m_qualityStats.duplicateCaptionsSuppressed;
+        if (cleanedSegment->source != m_lastAcceptedSegmentSource) {
+            ++m_qualityStats.crossSourceDuplicatesSuppressed;
         }
         touchUpdatedAt();
         return false;
     }
 
-    const std::string normalizedKey = normalizedTextKey(segment);
+    const std::string normalizedKey = normalizedTextKey(*cleanedSegment);
     if (decision == DuplicateDecision::ReplaceWithPreferredSource) {
-        ++m_duplicateSuppressedCount;
-        ++m_crossSourceDuplicateSuppressedCount;
+        ++m_qualityStats.duplicateCaptionsSuppressed;
+        ++m_qualityStats.crossSourceDuplicatesSuppressed;
         bool replaced = false;
         for (auto iterator = m_state.latestSegments.rbegin(); iterator != m_state.latestSegments.rend(); ++iterator) {
             if (isNearDuplicateText(normalizedTextKey(*iterator), normalizedKey)
-                && systemAudioPreferredOver(iterator->source, segment.source)) {
-                *iterator = segment;
+                && systemAudioPreferredOver(iterator->source, cleanedSegment->source)) {
+                *iterator = *cleanedSegment;
                 replaced = true;
                 break;
             }
         }
         if (!replaced) {
-            m_state.latestSegments.push_back(segment);
+            m_state.latestSegments.push_back(*cleanedSegment);
         }
+        ++m_qualityStats.captionsAccepted;
+    } else if (m_merger.mergeIntoLatest(m_state.latestSegments, *cleanedSegment, mergerOptions())) {
+        ++m_qualityStats.captionsAccepted;
+        ++m_qualityStats.captionsMerged;
     } else {
-        m_state.latestSegments.push_back(segment);
+        m_state.latestSegments.push_back(*cleanedSegment);
+        ++m_qualityStats.captionsAccepted;
     }
 
-    if (!normalizedKey.empty()) {
-        m_lastAcceptedSegmentText = normalizedKey;
-        m_lastAcceptedSegmentSource = segment.source;
-        m_lastAcceptedSegmentAt = std::chrono::steady_clock::now();
+    if (!m_state.latestSegments.empty()) {
+        updateLastAcceptedSegment(m_state.latestSegments.back());
     }
     trimLatestSegments();
     touchUpdatedAt();
@@ -395,6 +480,36 @@ void CaptionManager::trimLatestSegments()
     }
     const auto removeCount = m_state.latestSegments.size() - m_maxStoredSegments;
     m_state.latestSegments.erase(m_state.latestSegments.begin(), m_state.latestSegments.begin() + static_cast<std::ptrdiff_t>(removeCount));
+}
+
+CaptionCleanerOptions CaptionManager::cleanerOptions() const
+{
+    return CaptionCleanerOptions {
+        .enabled = m_state.cleaningEnabled,
+        .capitalizeFirstLetter = m_state.cleaningEnabled,
+        .addLightPunctuation = m_state.cleaningEnabled && m_state.autoPunctuationLight
+    };
+}
+
+CaptionMergerOptions CaptionManager::mergerOptions() const
+{
+    return CaptionMergerOptions {
+        .enabled = m_state.mergeShortSegments,
+        .allowCrossSource = false,
+        .maxGapMs = m_state.mergeMaxGapMs,
+        .maxCharacters = m_state.mergeMaxCharacters
+    };
+}
+
+void CaptionManager::updateLastAcceptedSegment(const CaptionSegment &segment)
+{
+    const std::string normalizedKey = normalizedTextKey(segment);
+    if (normalizedKey.empty()) {
+        return;
+    }
+    m_lastAcceptedSegmentText = normalizedKey;
+    m_lastAcceptedSegmentSource = segment.source;
+    m_lastAcceptedSegmentAt = std::chrono::steady_clock::now();
 }
 
 CaptionManager::DuplicateDecision CaptionManager::duplicateDecision(const CaptionSegment &segment) const

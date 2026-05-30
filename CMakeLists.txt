@@ -28,8 +28,10 @@ find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 set(LOCAL_JARVIS_CORE_SOURCES
+    core/caption/CaptionCleaner.cpp
     core/caption/CaptionFormatter.cpp
     core/caption/CaptionManager.cpp
+    core/caption/CaptionMerger.cpp
     core/caption/DummyCaptionSource.cpp
     core/session/SessionManager.cpp
     core/companion/AnimationStateMachine.cpp

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -38,6 +39,15 @@ struct CaptionSegment {
     std::int64_t endMs = 0;
     bool isFinal = true;
     CaptionSource source = CaptionSource::Unknown;
+};
+
+struct CaptionQualityStats {
+    std::size_t captionsAccepted = 0;
+    std::size_t captionsRejected = 0;
+    std::size_t captionsMerged = 0;
+    std::size_t duplicateCaptionsSuppressed = 0;
+    std::size_t crossSourceDuplicatesSuppressed = 0;
+    std::size_t displayRefreshesSkipped = 0;
 };
 
 [[nodiscard]] std::string toString(CaptionMode mode);

@@ -21,6 +21,11 @@ struct CaptionState {
     bool suppressDuplicates = true;
     int duplicateWindowMs = 5000;
     bool clearOnAsrOff = false;
+    bool cleaningEnabled = true;
+    bool mergeShortSegments = true;
+    int mergeMaxGapMs = 1200;
+    int mergeMaxCharacters = 220;
+    bool autoPunctuationLight = true;
     std::vector<CaptionSegment> latestSegments;
     std::string lastUpdatedAt;
 };

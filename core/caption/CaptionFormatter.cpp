@@ -211,7 +211,7 @@ std::string CaptionFormatter::format(const CaptionState &state, const std::vecto
     std::vector<std::string> selectedText;
     int selectedLines = 0;
     for (auto iterator = selectedSegments.rbegin(); iterator != selectedSegments.rend(); ++iterator) {
-        const std::string segmentText = formatSegment(state, *iterator);
+        const std::string segmentText = wrapOutputLines(state, formatSegment(state, *iterator));
         if (segmentText.empty()) {
             continue;
         }
@@ -370,6 +370,72 @@ int CaptionFormatter::lineCount(const std::string &text) const
         return 0;
     }
     return static_cast<int>(std::count(text.begin(), text.end(), '\n')) + 1;
+}
+
+int CaptionFormatter::targetLineLength(const CaptionState &state) const
+{
+    if (state.maxCharacters <= 0) {
+        return 96;
+    }
+    if (state.maxLines <= 1) {
+        return state.maxCharacters;
+    }
+    const int divisor = state.maxLines >= 3 ? 2 : state.maxLines;
+    return std::clamp(state.maxCharacters / divisor, 48, 96);
+}
+
+std::string CaptionFormatter::wrapOutputLines(const CaptionState &state, const std::string &text) const
+{
+    const int targetLength = targetLineLength(state);
+    std::stringstream stream(text);
+    std::string line;
+    std::string wrapped;
+    while (std::getline(stream, line)) {
+        const std::string wrappedLine = wrapLine(line, targetLength);
+        if (wrappedLine.empty()) {
+            continue;
+        }
+        if (!wrapped.empty()) {
+            wrapped += '\n';
+        }
+        wrapped += wrappedLine;
+    }
+    return wrapped;
+}
+
+std::string CaptionFormatter::wrapLine(const std::string &line, int targetLength) const
+{
+    if (targetLength <= 0 || static_cast<int>(line.size()) <= targetLength) {
+        return line;
+    }
+
+    std::stringstream words(line);
+    std::string word;
+    std::string wrapped;
+    std::string currentLine;
+    while (words >> word) {
+        if (currentLine.empty()) {
+            currentLine = word;
+            continue;
+        }
+        if (static_cast<int>(currentLine.size() + 1 + word.size()) > targetLength) {
+            if (!wrapped.empty()) {
+                wrapped += '\n';
+            }
+            wrapped += currentLine;
+            currentLine = word;
+        } else {
+            currentLine += ' ';
+            currentLine += word;
+        }
+    }
+    if (!currentLine.empty()) {
+        if (!wrapped.empty()) {
+            wrapped += '\n';
+        }
+        wrapped += currentLine;
+    }
+    return wrapped.empty() ? line : wrapped;
 }
 
 std::string CaptionFormatter::limitOutput(const std::string &text, int maxLines, int maxCharacters) const

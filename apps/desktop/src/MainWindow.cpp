@@ -680,6 +680,20 @@ void MainWindow::buildUi()
     captionSourceLayout->addStretch();
     captionLayout->addLayout(captionSourceLayout);
 
+    auto *captionQualityLayout = new QHBoxLayout();
+    m_captionCleaningCheckBox = new QCheckBox("Clean captions", captionGroup);
+    m_captionCleaningCheckBox->setAccessibleName("Clean captions");
+    m_captionMergeShortCheckBox = new QCheckBox("Merge short captions", captionGroup);
+    m_captionMergeShortCheckBox->setAccessibleName("Merge short captions");
+    captionQualityLayout->addWidget(m_captionCleaningCheckBox);
+    captionQualityLayout->addWidget(m_captionMergeShortCheckBox);
+    captionQualityLayout->addStretch();
+    captionLayout->addLayout(captionQualityLayout);
+
+    m_captionQualityStatsLabel = new QLabel(captionGroup);
+    m_captionQualityStatsLabel->setWordWrap(true);
+    captionLayout->addWidget(m_captionQualityStatsLabel);
+
     auto *captionLimitLayout = new QHBoxLayout();
     m_captionMaxLinesSpinBox = new QSpinBox(captionGroup);
     m_captionMaxLinesSpinBox->setAccessibleName("Caption max lines");
@@ -1047,6 +1061,16 @@ void MainWindow::connectSignals()
 
     connect(m_captionSourceDisplayModeCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
         m_captionManager.setSourceDisplayMode(captionSourceDisplayModeFromIndex(index));
+        applyCompanionState();
+    });
+
+    connect(m_captionCleaningCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setCleaningEnabled(checked);
+        applyCompanionState();
+    });
+
+    connect(m_captionMergeShortCheckBox, &QCheckBox::toggled, this, [this](bool checked) {
+        m_captionManager.setMergeShortSegments(checked);
         applyCompanionState();
     });
 
@@ -2334,13 +2358,14 @@ void MainWindow::handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscri
     }
 
     auto sanitizedSegment = segment;
-    sanitizedSegment.text = trimAscii(segment.text);
+    sanitizedSegment.text = m_captionManager.cleanTranscriptText(segment.text);
     if (sanitizedSegment.speaker.empty()
         || (sanitizedSegment.audioSource == local_jarvis::asr::AsrAudioSource::SystemAudio
             && sanitizedSegment.speaker == "Microphone")) {
         sanitizedSegment.speaker = local_jarvis::asr::captionSpeakerForSource(sanitizedSegment.audioSource);
     }
     if (isBlankAsrText(sanitizedSegment.text)) {
+        m_captionManager.recordRejectedCaption();
         recordAsrEvent(
             sanitizedSegment.audioSource == local_jarvis::asr::AsrAudioSource::SystemAudio
                 ? "system_audio_asr_blank_output"
@@ -3099,10 +3124,16 @@ void MainWindow::refreshStatus()
             .arg(QString::number(asrStats.chunksQueued),
                  QString::number(asrStats.chunksProcessed),
                  QString::number(asrStats.pendingChunks));
+        const auto captionQuality = m_captionManager.qualityStats();
         statsText += QString("\nDuplicates suppressed: captions %1 | cross-source %2 | transcripts %3")
-            .arg(QString::number(m_captionManager.duplicateSuppressedCount()),
-                 QString::number(m_captionManager.crossSourceDuplicateSuppressedCount()),
+            .arg(QString::number(captionQuality.duplicateCaptionsSuppressed),
+                 QString::number(captionQuality.crossSourceDuplicatesSuppressed),
                  QString::number(m_asrDuplicateTranscriptSuppressed));
+        statsText += QString("\nCaption quality: accepted %1 | rejected %2 | merged %3 | no-op refreshes %4")
+            .arg(QString::number(captionQuality.captionsAccepted),
+                 QString::number(captionQuality.captionsRejected),
+                 QString::number(captionQuality.captionsMerged),
+                 QString::number(captionQuality.displayRefreshesSkipped));
         statsText += QString("\nPreprocessing: %1 | last gain: %2 dB | limiter: %3")
             .arg(asrStats.preprocessingEnabled ? "enabled" : "disabled",
                  QString::number(asrStats.lastPreprocessingGainDb, 'f', 1),
@@ -3443,6 +3474,8 @@ void MainWindow::refreshCaptionSettings()
     const QSignalBlocker speakerBlocker(m_captionShowSpeakerCheckBox);
     const QSignalBlocker sourceLabelsBlocker(m_captionShowSourceLabelsCheckBox);
     const QSignalBlocker sourceModeBlocker(m_captionSourceDisplayModeCombo);
+    const QSignalBlocker cleaningBlocker(m_captionCleaningCheckBox);
+    const QSignalBlocker mergeBlocker(m_captionMergeShortCheckBox);
     const QSignalBlocker linesBlocker(m_captionMaxLinesSpinBox);
     const QSignalBlocker charactersBlocker(m_captionMaxCharactersSpinBox);
     const QSignalBlocker sourceBlocker(m_captionSourceLanguageEdit);
@@ -3457,6 +3490,8 @@ void MainWindow::refreshCaptionSettings()
     m_captionShowSpeakerCheckBox->setChecked(state.showSpeaker);
     m_captionShowSourceLabelsCheckBox->setChecked(state.showSourceLabels);
     m_captionSourceDisplayModeCombo->setCurrentIndex(captionSourceDisplayModeIndex(state.sourceDisplayMode));
+    m_captionCleaningCheckBox->setChecked(state.cleaningEnabled);
+    m_captionMergeShortCheckBox->setChecked(state.mergeShortSegments);
     m_captionMaxLinesSpinBox->setValue(state.maxLines);
     m_captionMaxCharactersSpinBox->setValue(state.maxCharacters);
     m_captionSourceLanguageEdit->setText(QString::fromStdString(state.sourceLanguage));
@@ -3466,6 +3501,15 @@ void MainWindow::refreshCaptionSettings()
     m_captionHeightSpinBox->setValue(companionState.captionHeight);
     m_captionFontSizeSpinBox->setValue(companionState.captionFontSize);
     m_captionOpacitySpinBox->setValue(companionState.captionOpacity);
+    if (m_captionQualityStatsLabel) {
+        const auto stats = m_captionManager.qualityStats();
+        m_captionQualityStatsLabel->setText(QString("Caption quality: accepted %1 | rejected %2 | merged %3 | duplicates %4 | no-op refreshes %5")
+            .arg(QString::number(stats.captionsAccepted),
+                 QString::number(stats.captionsRejected),
+                 QString::number(stats.captionsMerged),
+                 QString::number(stats.duplicateCaptionsSuppressed),
+                 QString::number(stats.displayRefreshesSkipped)));
+    }
 }
 
 void MainWindow::setCompanionAnimation(local_jarvis::companion::AnimationState state)

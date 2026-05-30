@@ -76,6 +76,8 @@ Do not commit model files to this repo.
 - Caption source labels distinguish inputs as `Mic:` and `System:` when source labels are enabled.
 - Caption source display modes are available for combined chronological captions, system-only captions, mic-only captions, prefer-system captions, and prefer-mic captions. The default is combined chronological with source labels on.
 - If microphone and system audio produce the same or nearly same text within the duplicate window, Local Jarvis suppresses the duplicate caption/transcript row and prefers system audio for online class or playback captions.
+- Caption cleaning normalizes whitespace, collapses obvious repeated punctuation, lightly capitalizes/punctuates ASR text, and rejects known non-content tokens such as `[BLANK_AUDIO]`.
+- Short consecutive captions from the same source/speaker can be merged in memory before display/storage quality checks. The default merge window is 1200 ms and does not merge microphone and system audio together.
 
 ## Audio And Caption Quality Settings
 
@@ -97,8 +99,13 @@ These settings are stored in SQLite and can be adjusted by development builds or
 - `caption.clear_on_asr_off`, default `false`
 - `caption.source_labels.enabled`, default `true`
 - `caption.source_display_mode`, default `Combined`
+- `caption.cleaning.enabled`, default `true`
+- `caption.merge_short_segments`, default `true`
+- `caption.merge_max_gap_ms`, default `1200`
+- `caption.merge_max_characters`, default `220`
+- `caption.auto_punctuation_light`, default `true`
 
-Caption display is stabilized by holding the last useful caption briefly, suppressing repeated identical captions within the duplicate window, suppressing cross-source duplicates, and avoiding label refresh work when the formatted caption text has not changed.
+Caption display is stabilized by holding the last useful caption briefly, cleaning text before display, merging short same-source captions, suppressing repeated identical captions within the duplicate window, suppressing cross-source duplicates, and avoiding label refresh work when the formatted caption text has not changed.
 
 ## Local Events
 

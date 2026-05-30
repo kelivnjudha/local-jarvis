@@ -62,6 +62,11 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm `Mic:` and `System:` source labels hide and reappear independently from speaker labels.
 - Change caption source display mode to Combined, System only, Mic only, Prefer system, and Prefer mic.
 - Confirm the caption bubble filters or prefers the selected source without hiding the companion or assistant panel.
+- Toggle Clean captions.
+- Confirm obvious whitespace/punctuation artifacts are cleaned when enabled and no `[BLANK_AUDIO]` text appears as a caption.
+- Toggle Merge short captions.
+- Confirm short same-source/same-speaker captions can merge cleanly, while microphone and system audio remain source-separated.
+- Confirm caption quality counters update for accepted, rejected, merged, duplicate-suppressed, and no-op refresh cases.
 - Adjust caption max lines and max characters in Settings.
 - Confirm caption output respects the limits and settings persist after restart.
 - Toggle translation.
@@ -180,6 +185,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Transcript panel shows the same stub system transcript segment.
 - Confirm SQLite stores a transcript segment with source `system_audio_asr_stub`.
 - Confirm skipped silence, too-quiet chunks, and blank output counters are visible and do not flicker blank captions.
+- Confirm short system captions merge when the merge toggle is enabled and stay separate when it is disabled.
 - Disable System Audio ASR.
 - Confirm system audio capture can remain controlled independently.
 - Stop the session.
@@ -210,6 +216,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm ASR status moves through Listening or Processing while microphone PCM is active.
 - Confirm the caption bubble shows stub transcript text such as "Stub transcript chunk 1".
 - Confirm the caption bubble does not flicker blank between ASR chunks or skipped chunks.
+- Confirm caption cleaning adds only light punctuation/capitalization and does not damage technical words or acronyms.
 - Confirm the Transcript panel shows the same stub transcript segment.
 - Confirm SQLite stores a transcript segment with source `microphone_asr_stub`.
 - Disable ASR.

@@ -1,5 +1,7 @@
+#include "caption/CaptionCleaner.h"
 #include "caption/CaptionFormatter.h"
 #include "caption/CaptionManager.h"
+#include "caption/CaptionMerger.h"
 #include "caption/DummyCaptionSource.h"
 #include "storage/Storage.h"
 
@@ -115,6 +117,92 @@ bool testLimitsAndFallbacks()
         .isFinal = true
     });
     return expect(formatter.format(fallbackState) == "EN: Fallback original.", "Missing translation should fall back safely.");
+}
+
+bool testCaptionCleaner()
+{
+    using local_jarvis::caption::CaptionCleaner;
+    using local_jarvis::caption::CaptionCleanerOptions;
+
+    CaptionCleaner cleaner;
+    CaptionCleanerOptions simpleOptions;
+    simpleOptions.capitalizeFirstLetter = false;
+    simpleOptions.addLightPunctuation = false;
+
+    const auto whitespace = cleaner.cleanText("  hello\t   world  ", simpleOptions);
+    if (!expect(!whitespace.rejected && whitespace.text == "hello world", "CaptionCleaner should normalize whitespace.")) {
+        return false;
+    }
+
+    const auto punctuation = cleaner.cleanText("wait!!!  what??", simpleOptions);
+    if (!expect(!punctuation.rejected && punctuation.text == "wait! what?",
+            "CaptionCleaner should collapse repeated punctuation.")) {
+        return false;
+    }
+
+    if (!expect(cleaner.cleanText("[BLANK_AUDIO]").rejected
+            && cleaner.cleanText("   ").rejected,
+            "CaptionCleaner should reject blank/non-content tokens.")) {
+        return false;
+    }
+
+    const auto polished = cleaner.cleanText("local jarvis caption test");
+    return expect(polished.text == "Local jarvis caption test.",
+        "CaptionCleaner should apply light capitalization and punctuation.");
+}
+
+bool testCaptionMerger()
+{
+    using local_jarvis::caption::CaptionMerger;
+    using local_jarvis::caption::CaptionMergerOptions;
+    using local_jarvis::caption::CaptionSource;
+
+    CaptionMerger merger;
+    CaptionMergerOptions options;
+    auto first = sampleSegment();
+    first.id = "first";
+    first.speaker = "Teacher";
+    first.originalText = "Short one.";
+    first.translatedText = "";
+    first.summaryText = "";
+    first.startMs = 0;
+    first.endMs = 600;
+    first.source = CaptionSource::Microphone;
+
+    auto second = first;
+    second.id = "second";
+    second.originalText = "Short two.";
+    second.startMs = 1000;
+    second.endMs = 1400;
+
+    if (!expect(merger.canMerge(first, second, options), "CaptionMerger should merge short same-source segments.")) {
+        return false;
+    }
+    const auto merged = merger.merge(first, second);
+    if (!expect(merged.originalText == "Short one. Short two." && merged.startMs == 0 && merged.endMs == 1400,
+            "CaptionMerger should preserve predictable merged text and timing.")) {
+        return false;
+    }
+
+    auto system = second;
+    system.source = CaptionSource::SystemAudio;
+    if (!expect(!merger.canMerge(first, system, options), "CaptionMerger should not merge mic/system by default.")) {
+        return false;
+    }
+
+    auto late = second;
+    late.startMs = 3000;
+    late.endMs = 3500;
+    if (!expect(!merger.canMerge(first, late, options), "CaptionMerger should reject gaps above the limit.")) {
+        return false;
+    }
+
+    CaptionMergerOptions tightOptions = options;
+    tightOptions.maxCharacters = 40;
+    auto longSecond = second;
+    longSecond.originalText = "This second caption is long enough to exceed the merge limit.";
+    return expect(!merger.canMerge(first, longSecond, tightOptions),
+        "CaptionMerger should reject merges above the max character limit.");
 }
 
 bool testSourceAwareFormatting()
@@ -260,6 +348,8 @@ bool testCaptionManager()
     manager.setShowSourceLabels(false);
     manager.addSegment(sampleSegment());
     manager.addSegment(sampleSegment());
+    const auto firstDisplayRefresh = manager.currentDisplayText();
+    const auto secondDisplayRefresh = manager.currentDisplayText();
     const auto duplicatesSuppressed = manager.duplicateSuppressedCount();
     const auto storedAfterDuplicate = manager.state().latestSegments.size();
     const auto displayBeforeClear = manager.currentDisplayText();
@@ -271,6 +361,7 @@ bool testCaptionManager()
     const bool ok = expect(storedAfterDuplicate == 1, "CaptionManager should store latest non-duplicate segment in memory.")
         && expect(displayBeforeClear == "Benedict's solution tests for reducing sugars.", "CaptionManager display text failed.")
         && expect(duplicatesSuppressed == 1, "CaptionManager should suppress duplicate caption segments.")
+        && expect(firstDisplayRefresh == secondDisplayRefresh, "Repeated caption display refresh should be stable.")
         && expect(heldText == displayBeforeClear, "CaptionManager should hold the last useful caption briefly after segments clear.")
         && expect(reloaded.loadSettings(), "Reloaded caption settings should load.")
         && expect(reloaded.state().captionMode == CaptionMode::OriginalOnly, "Caption mode did not persist.")
@@ -278,12 +369,95 @@ bool testCaptionManager()
         && expect(!reloaded.state().showSourceLabels, "Show source labels setting did not persist.")
         && expect(reloaded.state().sourceDisplayMode == local_jarvis::caption::CaptionSourceDisplayMode::SystemOnly,
             "Caption source display mode did not persist.")
+        && expect(manager.qualityStats().displayRefreshesSkipped > 0, "CaptionManager should count no-op display refreshes.")
         && expect(reloaded.state().maxLines == 3, "Max lines did not persist.")
         && expect(reloaded.state().maxCharacters == 120, "Max characters did not persist.");
 
     storage.close();
     std::filesystem::remove(dbPath);
     return ok;
+}
+
+bool testCaptionManagerQuality()
+{
+    using local_jarvis::caption::CaptionManager;
+    using local_jarvis::caption::CaptionMode;
+    using local_jarvis::caption::CaptionSource;
+
+    CaptionManager manager;
+    manager.setCaptionMode(CaptionMode::OriginalOnly);
+    manager.setCaptionsEnabled(true);
+    manager.setShowSpeaker(false);
+    manager.setShowSourceLabels(false);
+    manager.setMergeShortSegments(true);
+    manager.setMergeMaxGapMs(1200);
+    manager.setMergeMaxCharacters(220);
+
+    auto first = sampleSegment();
+    first.id = "quality-1";
+    first.speaker = "Teacher";
+    first.originalText = "first short";
+    first.translatedText = "";
+    first.summaryText = "";
+    first.startMs = 0;
+    first.endMs = 500;
+    first.source = CaptionSource::Microphone;
+
+    auto second = first;
+    second.id = "quality-2";
+    second.originalText = "second short";
+    second.startMs = 900;
+    second.endMs = 1300;
+
+    if (!expect(manager.addSegment(first) && manager.addSegment(second),
+            "CaptionManager should accept clean short captions.")) {
+        return false;
+    }
+    if (!expect(manager.state().latestSegments.size() == 1
+            && manager.currentDisplayText() == "First short. Second short.",
+            "CaptionManager should clean and merge short consecutive captions.")) {
+        return false;
+    }
+
+    auto blank = first;
+    blank.id = "quality-blank";
+    blank.originalText = "[BLANK_AUDIO]";
+    blank.translatedText = "";
+    blank.summaryText = "";
+    const bool blankAccepted = manager.addSegment(blank);
+    if (!expect(!blankAccepted, "CaptionManager should reject blank ASR artifacts.")) {
+        return false;
+    }
+
+    const auto stats = manager.qualityStats();
+    if (!expect(stats.captionsAccepted == 2
+            && stats.captionsMerged == 1
+            && stats.captionsRejected == 1,
+            "CaptionManager quality counters should track accepted, merged, and rejected captions.")) {
+        return false;
+    }
+
+    return expect(manager.cleanTranscriptText("[BLANK_AUDIO]").empty(),
+        "Transcript storage cleaner should reject blank content.");
+}
+
+bool testCleanSummaryFallback()
+{
+    using local_jarvis::caption::CaptionManager;
+    using local_jarvis::caption::CaptionMode;
+
+    CaptionManager manager;
+    manager.setCaptionMode(CaptionMode::CleanSummary);
+    manager.setCaptionsEnabled(true);
+    manager.setShowSpeaker(false);
+    manager.setShowSourceLabels(false);
+    auto fallback = sampleSegment();
+    fallback.originalText = "clean summary fallback";
+    fallback.translatedText = "";
+    fallback.summaryText = "";
+    manager.addSegment(fallback);
+    return expect(manager.currentDisplayText() == "Key point: Clean summary fallback.",
+        "CleanSummary mode should fall back to cleaned caption text when summaryText is missing.");
 }
 
 bool testDummyCaptionSource()
@@ -320,9 +494,13 @@ int main()
 {
     const bool ok = testFormattingModes()
         && testLimitsAndFallbacks()
+        && testCaptionCleaner()
+        && testCaptionMerger()
         && testSourceAwareFormatting()
         && testCrossSourceDuplicateSuppression()
         && testCaptionManager()
+        && testCaptionManagerQuality()
+        && testCleanSummaryFallback()
         && testDummyCaptionSource();
     return ok ? EXIT_SUCCESS : EXIT_FAILURE;
 }

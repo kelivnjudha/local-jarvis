@@ -228,6 +228,9 @@ private:
     QCheckBox *m_captionShowSpeakerCheckBox = nullptr;
     QCheckBox *m_captionShowSourceLabelsCheckBox = nullptr;
     QComboBox *m_captionSourceDisplayModeCombo = nullptr;
+    QCheckBox *m_captionCleaningCheckBox = nullptr;
+    QCheckBox *m_captionMergeShortCheckBox = nullptr;
+    QLabel *m_captionQualityStatsLabel = nullptr;
     QSpinBox *m_captionMaxLinesSpinBox = nullptr;
     QSpinBox *m_captionMaxCharactersSpinBox = nullptr;
     QLineEdit *m_captionSourceLanguageEdit = nullptr;
