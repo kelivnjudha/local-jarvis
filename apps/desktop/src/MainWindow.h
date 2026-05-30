@@ -33,6 +33,7 @@
 #include "audio/DummyAudioCapture.h"
 #include "audio/AudioSpeechDetector.h"
 #include "audio/MicrophoneCapture.h"
+#include "audio/SystemAudioCapture.h"
 #include "caption/CaptionManager.h"
 #include "caption/DummyCaptionSource.h"
 #include "companion/CompanionManager.h"
@@ -63,12 +64,18 @@ private:
     void refreshStatus();
     void refreshMicrophoneDevices();
     void refreshMicrophoneRuntimeUi();
+    void refreshSystemAudioDevices();
+    void refreshSystemAudioRuntimeUi();
     void handleAudioModeChanged(int index);
     void handleMicrophoneDeviceChanged(int index);
+    void handleSystemAudioDeviceChanged(int index);
     void setMicrophoneRequested(bool enabled);
     void startMicrophoneTest();
     void stopMicrophoneTest();
     void finishMicrophoneTest();
+    void startSystemAudioTest();
+    void stopSystemAudioTest();
+    void finishSystemAudioTest();
     void startMicrophoneDeviceCompare();
     void stopMicrophoneDeviceCompare();
     void advanceMicrophoneDeviceCompare();
@@ -90,11 +97,15 @@ private:
     void handlePcmAudioFrame(const local_jarvis::audio::PcmAudioFrame &frame);
     void handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscriptSegment &segment);
     void stopMicrophoneForShutdown();
+    void stopSystemAudioForShutdown();
     void recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details);
+    void recordSystemAudioPrivacyEvent(const std::string &eventType, const std::string &details);
     void recordAsrEvent(const std::string &eventType, const std::string &details, const std::optional<std::string> &sessionId = std::nullopt);
     [[nodiscard]] QString microphoneDiagnosticsText() const;
     [[nodiscard]] QString microphoneDeviceListText() const;
     [[nodiscard]] QString microphoneRecommendationText() const;
+    [[nodiscard]] QString systemAudioDiagnosticsText() const;
+    [[nodiscard]] QString systemAudioDeviceListText() const;
     [[nodiscard]] QString asrBackendText() const;
     [[nodiscard]] QString asrStatusText() const;
     [[nodiscard]] QString whisperStatusText() const;
@@ -147,6 +158,12 @@ private:
     QLabel *m_microphoneRecommendationLabel = nullptr;
     QLabel *m_microphoneDiagnosticsLabel = nullptr;
     QLabel *m_microphoneErrorLabel = nullptr;
+    QComboBox *m_systemAudioDeviceCombo = nullptr;
+    QPushButton *m_refreshSystemAudioDevicesButton = nullptr;
+    QPushButton *m_systemAudioTestButton = nullptr;
+    QProgressBar *m_systemAudioLevelBar = nullptr;
+    QLabel *m_systemAudioDiagnosticsLabel = nullptr;
+    QLabel *m_systemAudioErrorLabel = nullptr;
     QComboBox *m_asrBackendCombo = nullptr;
     QCheckBox *m_asrEnabledCheckBox = nullptr;
     QLineEdit *m_whisperModelPathEdit = nullptr;
@@ -208,6 +225,7 @@ private:
     local_jarvis::privacy::PrivacyManager m_privacyManager;
     local_jarvis::audio::DummyAudioCapture m_audioCapture;
     std::unique_ptr<local_jarvis::audio::MicrophoneCapture> m_realMicrophoneCapture;
+    std::unique_ptr<local_jarvis::audio::SystemAudioCapture> m_systemAudioCapture;
     local_jarvis::audio::MicrophoneCapture *m_activeMicrophoneCapture = nullptr;
     std::unique_ptr<local_jarvis::asr::AsrWorker> m_asrWorker;
     local_jarvis::asr::AudioChunkBuffer m_audioChunkBuffer;
@@ -232,6 +250,7 @@ private:
     QTimer m_microphoneStatusTimer;
     QTimer m_microphoneTestTimer;
     QTimer m_microphoneCompareTimer;
+    QTimer m_systemAudioTestTimer;
     std::atomic_bool m_destroying { false };
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
@@ -243,8 +262,12 @@ private:
     int m_whisperMaxThreads = 4;
     bool m_whisperLoadInProgress = false;
     bool m_reportedMicrophoneActive = false;
+    bool m_reportedSystemAudioActive = false;
     bool m_microphoneTestActive = false;
     bool m_microphoneTestPreviousMicRequested = false;
+    bool m_systemAudioTestActive = false;
+    bool m_systemAudioTestPreviousSystemAudioRequested = false;
+    int m_systemAudioTestDurationMs = 10000;
     struct MicrophoneDeviceSnapshot {
         QString name;
         std::string id;
@@ -280,4 +303,5 @@ private:
     std::chrono::steady_clock::time_point m_lastStoredAsrAt {};
     std::uint64_t m_asrDuplicateTranscriptSuppressed = 0;
     std::string m_lastReportedMicrophoneFailure;
+    std::string m_lastReportedSystemAudioFailure;
 };

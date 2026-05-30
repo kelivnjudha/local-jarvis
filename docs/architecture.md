@@ -11,7 +11,7 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 - `core/session`: Starts and stops local sessions, emits lifecycle events, and records session IDs.
 - `core/storage`: Owns the SQLite connection, schema creation, and session persistence.
 - `core/privacy`: Tracks explicit capture permissions and exposes capture status.
-- `core/audio` and `core/screen`: Cross-platform interfaces. Windows microphone capture is implemented through explicit user action; screen and system-audio capture remain out of scope.
+- `core/audio` and `core/screen`: Cross-platform interfaces. Windows microphone capture and Windows system-audio loopback diagnostics are implemented through explicit user action; screen capture remains out of scope.
 - `core/asr`, `core/ocr`, and `core/llm`: Local processing boundaries. ASR defaults to `StubAsrEngine`; whisper.cpp support is optional behind `LOCAL_JARVIS_ENABLE_WHISPER`.
 - `core/logging`: Minimal process-local lifecycle logging.
 
@@ -24,7 +24,7 @@ Local Jarvis is organized as a Qt desktop shell on top of a modular C++ core. Th
 5. The user clicks Stop Session.
 6. `Storage` updates `ended_at`.
 
-Microphone capture is explicit and visible. Raw audio is kept in memory for diagnostics/ASR only and is not written to disk. Screen capture and system audio capture remain disabled/out of scope.
+Microphone and system-audio capture are explicit and visible. Raw audio is kept in memory for diagnostics and local processing only and is not written to disk. In Phase 3E-A, system audio is diagnostics-only and is not fed into ASR or transcript storage.
 
 Dummy transcript generation is available for testing the session, UI, and storage path. Stub ASR can also generate deterministic local transcript segments. Real Whisper ASR is optional, local-only, and stores transcript text only during active user-started sessions.
 

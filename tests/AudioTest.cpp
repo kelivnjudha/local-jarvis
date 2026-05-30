@@ -1,5 +1,6 @@
 #include "audio/AudioLevelMeter.h"
 #include "audio/DummyAudioCapture.h"
+#include "audio/SystemAudioCapture.h"
 #include "privacy/PrivacyManager.h"
 
 #include <array>
@@ -144,6 +145,27 @@ int main()
     }
     dummyCapture.stopMicrophoneCapture();
     if (!expect(!dummyCapture.isMicrophoneActive(), "Dummy microphone should stop cleanly.")) {
+        return EXIT_FAILURE;
+    }
+
+    auto systemAudio = local_jarvis::audio::createPlatformSystemAudioCapture(privacy);
+    if (!expect(systemAudio != nullptr, "Platform system audio capture factory should return a safe implementation.")) {
+        return EXIT_FAILURE;
+    }
+    const auto defaultSystemDiagnostics = systemAudio->diagnostics();
+    if (!expect(!defaultSystemDiagnostics.captureActive
+            && defaultSystemDiagnostics.sampleRate == 0
+            && defaultSystemDiagnostics.channelCount == 0
+            && defaultSystemDiagnostics.buffersReceived == 0,
+            "System audio diagnostics should default to a safe inactive state.")) {
+        return EXIT_FAILURE;
+    }
+    if (!expect(!systemAudio->startSystemAudioCapture(), "System audio capture must not start before explicit permission.")) {
+        return EXIT_FAILURE;
+    }
+    systemAudio->stopSystemAudioCapture();
+    if (!expect(!systemAudio->isSystemAudioActive() && systemAudio->currentOutputLevel() == 0.0,
+            "System audio stop should be safe when capture was unavailable or not started.")) {
         return EXIT_FAILURE;
     }
 

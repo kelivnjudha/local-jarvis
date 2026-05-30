@@ -1,6 +1,6 @@
 # Desktop Smoke Test
 
-Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold, companion shell, caption pipeline, Phase 3A microphone foundation, and Phase 3B local ASR scaffold. It does not require system audio capture, screen capture, OCR, cloud services, whisper.cpp, or downloaded models.
+Use this checklist after a successful `windows-msvc-desktop-debug` build. It verifies the desktop scaffold, companion shell, caption pipeline, microphone foundation, system audio loopback foundation, and local ASR scaffold. It does not require screen capture, OCR, cloud services, whisper.cpp, or downloaded models.
 
 ## Launch
 
@@ -11,6 +11,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
+- Confirm the System Audio Output section renders with output device selector, refresh button, Start System Audio Test button, level meter, diagnostics, quality label, callback time, and last error.
 - Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
 - Confirm the Local ASR section renders audio quality diagnostics: speech detector state, skipped silence count, skipped too-quiet count, blank output count, duplicate suppression count, preprocessing state, and last preprocessing gain.
 - Confirm the Local ASR section renders Whisper settings: model path, Browse Model, language, translate toggle, max threads, and Whisper status.
@@ -141,6 +142,25 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm local privacy events are written for microphone start, stop, and any start failure.
 - Switch Audio capture mode back to Dummy audio.
 - Confirm dummy captions and dummy transcript/session flow still work.
+
+## System Audio Foundation
+
+- Confirm system audio capture is off at app launch.
+- Click Refresh Outputs.
+- Confirm the output device list loads real Windows output devices or shows a clear unavailable message.
+- Select the active playback device if devices are available.
+- Click Start System Audio Test.
+- Confirm system audio loopback starts only after that explicit click and no session is created.
+- Play a local test tone, video, music, or browser audio through the selected output device.
+- Confirm the system audio level meter and diagnostics show buffers, frames, callback time, RMS, peak, non-zero percentage, dBFS, and quality label.
+- Confirm the caption bubble may show "System audio active. Transcription will be added in the next phase." when microphone capture is not active.
+- Confirm the companion can switch to Listening while system audio capture is active.
+- Confirm the system audio test stops after its configured duration, or click Stop System Audio Test and confirm it stops cleanly.
+- Start a system audio test, then close the app while capture is active.
+- Confirm the app exits cleanly.
+- Confirm no raw audio files are created in the repo, build directories, or app data.
+- Confirm local privacy events are written for system audio test start, stop, and capture failure when applicable.
+- Confirm system audio is not fed into ASR and no transcript row is created from system audio in Phase 3E-A.
 
 ## Local ASR Scaffold
 

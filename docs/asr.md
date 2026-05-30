@@ -71,6 +71,7 @@ Do not commit model files to this repo.
 - Raw audio is not written to disk.
 - Transcript text is stored only while an explicit session is active.
 - Standalone microphone level tests do not store transcripts.
+- System audio loopback diagnostics from Phase 3E-A are not fed into ASR yet.
 - Whisper transcript segments use source `microphone_asr_whisper`.
 
 ## Audio And Caption Quality Settings

@@ -231,6 +231,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_processingQueue(m_storage, m_ollamaClient)
 {
     m_realMicrophoneCapture = local_jarvis::audio::createPlatformMicrophoneCapture(m_privacyManager);
+    m_systemAudioCapture = local_jarvis::audio::createPlatformSystemAudioCapture(m_privacyManager);
     m_activeMicrophoneCapture = &m_audioCapture;
     installPcmAudioCallback();
     buildUi();
@@ -247,9 +248,11 @@ MainWindow::~MainWindow()
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
     m_microphoneCompareTimer.stop();
+    m_systemAudioTestTimer.stop();
     stopAsrPipeline();
     clearPcmAudioCallback();
     stopMicrophoneForShutdown();
+    stopSystemAudioForShutdown();
     m_assistantPanelWindow.reset();
     m_captionBubbleWindow.reset();
     m_companionWindow.reset();
@@ -265,9 +268,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_microphoneStatusTimer.stop();
     m_microphoneTestTimer.stop();
     m_microphoneCompareTimer.stop();
+    m_systemAudioTestTimer.stop();
     stopAsrPipeline();
     clearPcmAudioCallback();
     stopMicrophoneForShutdown();
+    stopSystemAudioForShutdown();
 
     if (m_assistantPanelWindow) {
         m_assistantPanelWindow->close();
@@ -379,6 +384,37 @@ void MainWindow::buildUi()
     m_microphoneErrorLabel->setWordWrap(true);
     microphoneLayout->addWidget(m_microphoneErrorLabel);
     rootLayout->addWidget(microphoneGroup);
+
+    auto *systemAudioGroup = new QGroupBox("System Audio Output", central);
+    auto *systemAudioLayout = new QVBoxLayout(systemAudioGroup);
+    auto *systemAudioSelectorLayout = new QHBoxLayout();
+    m_systemAudioDeviceCombo = new QComboBox(systemAudioGroup);
+    m_systemAudioDeviceCombo->setAccessibleName("System audio output device");
+    m_refreshSystemAudioDevicesButton = new QPushButton("Refresh Outputs", systemAudioGroup);
+    m_systemAudioTestButton = new QPushButton("Start System Audio Test", systemAudioGroup);
+    systemAudioSelectorLayout->addWidget(m_systemAudioDeviceCombo, 1);
+    systemAudioSelectorLayout->addWidget(m_refreshSystemAudioDevicesButton);
+    systemAudioSelectorLayout->addWidget(m_systemAudioTestButton);
+    systemAudioLayout->addLayout(systemAudioSelectorLayout);
+
+    m_systemAudioLevelBar = new QProgressBar(systemAudioGroup);
+    m_systemAudioLevelBar->setAccessibleName("System audio output level");
+    m_systemAudioLevelBar->setRange(0, 100);
+    m_systemAudioLevelBar->setValue(0);
+    m_systemAudioLevelBar->setTextVisible(true);
+    systemAudioLayout->addWidget(m_systemAudioLevelBar);
+
+    auto *systemAudioDiagnosticsTitle = new QLabel("System audio diagnostics", systemAudioGroup);
+    systemAudioLayout->addWidget(systemAudioDiagnosticsTitle);
+    m_systemAudioDiagnosticsLabel = new QLabel(systemAudioGroup);
+    m_systemAudioDiagnosticsLabel->setWordWrap(true);
+    m_systemAudioDiagnosticsLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    systemAudioLayout->addWidget(m_systemAudioDiagnosticsLabel);
+
+    m_systemAudioErrorLabel = new QLabel(systemAudioGroup);
+    m_systemAudioErrorLabel->setWordWrap(true);
+    systemAudioLayout->addWidget(m_systemAudioErrorLabel);
+    rootLayout->addWidget(systemAudioGroup);
 
     auto *asrGroup = new QGroupBox("Local ASR", central);
     auto *asrLayout = new QVBoxLayout(asrGroup);
@@ -710,10 +746,13 @@ void MainWindow::connectSignals()
         if (checked && isRealMicrophoneMode()) {
             const QSignalBlocker blocker(m_systemAudioCaptureCheckBox);
             m_systemAudioCaptureCheckBox->setChecked(false);
-            appendLifecycleEvent("System audio capture is outside Phase 3A scope.");
+            appendLifecycleEvent("Use Start System Audio Test for real system audio loopback in Phase 3E-A.");
             return;
         }
         m_privacyManager.setSystemAudioEnabled(checked);
+        if (m_storage.isOpen()) {
+            m_storage.setSetting("system_audio.enabled", checked ? "true" : "false");
+        }
         if (m_sessionManager) {
             m_sessionManager->syncCaptureWithPrivacy();
         }
@@ -730,6 +769,22 @@ void MainWindow::connectSignals()
 
     connect(m_refreshMicrophoneDevicesButton, &QPushButton::clicked, this, [this]() {
         refreshMicrophoneDevices();
+    });
+
+    connect(m_systemAudioDeviceCombo, &QComboBox::currentIndexChanged, this, [this](int index) {
+        handleSystemAudioDeviceChanged(index);
+    });
+
+    connect(m_refreshSystemAudioDevicesButton, &QPushButton::clicked, this, [this]() {
+        refreshSystemAudioDevices();
+    });
+
+    connect(m_systemAudioTestButton, &QPushButton::clicked, this, [this]() {
+        if (m_systemAudioTestActive) {
+            stopSystemAudioTest();
+        } else {
+            startSystemAudioTest();
+        }
     });
 
     connect(m_microphoneTestButton, &QPushButton::clicked, this, [this]() {
@@ -778,6 +833,7 @@ void MainWindow::connectSignals()
 
     connect(&m_microphoneStatusTimer, &QTimer::timeout, this, [this]() {
         refreshMicrophoneRuntimeUi();
+        refreshSystemAudioRuntimeUi();
     });
     m_microphoneStatusTimer.start(250);
 
@@ -789,6 +845,11 @@ void MainWindow::connectSignals()
     connect(&m_microphoneCompareTimer, &QTimer::timeout, this, [this]() {
         advanceMicrophoneDeviceCompare();
     });
+
+    connect(&m_systemAudioTestTimer, &QTimer::timeout, this, [this]() {
+        finishSystemAudioTest();
+    });
+    m_systemAudioTestTimer.setSingleShot(true);
     m_microphoneCompareTimer.setSingleShot(true);
 
     connect(m_processStudyButton, &QPushButton::clicked, this, [this]() {
@@ -987,6 +1048,7 @@ void MainWindow::loadAudioSettings()
 {
     if (!m_storage.isOpen()) {
         refreshMicrophoneDevices();
+        refreshSystemAudioDevices();
         return;
     }
 
@@ -1006,12 +1068,27 @@ void MainWindow::loadAudioSettings()
         activeMicrophoneCapture().selectInputDevice(selectedDevice);
     }
 
+    const auto selectedOutputDevice = m_storage.getSetting("system_audio.selected_device_id").value_or("");
+    if (m_systemAudioCapture && !selectedOutputDevice.empty()) {
+        m_systemAudioCapture->selectOutputDevice(selectedOutputDevice);
+    }
+    try {
+        m_systemAudioTestDurationMs = std::clamp(
+            std::stoi(m_storage.getSetting("system_audio.test_duration_ms").value_or("10000")),
+            1000,
+            60000);
+    } catch (...) {
+        m_systemAudioTestDurationMs = 10000;
+    }
+    m_privacyManager.setSystemAudioEnabled(m_storage.getSetting("system_audio.enabled").value_or("false") == "true");
+
     loadAsrSettings();
     if (m_asrEnabled.load()) {
         startAsrPipelineIfNeeded();
     }
 
     refreshMicrophoneDevices();
+    refreshSystemAudioDevices();
 }
 
 void MainWindow::resetSessionManagerForAudioMode()
@@ -1084,6 +1161,51 @@ void MainWindow::refreshMicrophoneDevices()
     }
 }
 
+void MainWindow::refreshSystemAudioDevices()
+{
+    if (!m_systemAudioDeviceCombo || !m_systemAudioCapture) {
+        return;
+    }
+
+    const QSignalBlocker blocker(m_systemAudioDeviceCombo);
+    m_systemAudioDeviceCombo->clear();
+
+    const auto devices = m_systemAudioCapture->listOutputDevices();
+    if (devices.empty()) {
+        m_systemAudioDeviceCombo->addItem("No output devices available", "");
+        m_systemAudioDeviceCombo->setEnabled(false);
+        if (m_systemAudioErrorLabel) {
+            const auto error = m_systemAudioCapture->lastError();
+            m_systemAudioErrorLabel->setText(error.empty()
+                    ? "No output devices available."
+                    : QString::fromStdString(error));
+        }
+        return;
+    }
+
+    const std::string selectedId = m_systemAudioCapture->selectedOutputDeviceId();
+    int selectedIndex = 0;
+    for (int index = 0; index < static_cast<int>(devices.size()); ++index) {
+        const auto &device = devices[static_cast<std::size_t>(index)];
+        const QString label = QString("%1. %2%3")
+            .arg(QString::number(index + 1),
+                 QString::fromStdString(device.displayName),
+                 device.isDefault ? " (default)" : "");
+        m_systemAudioDeviceCombo->addItem(label, QString::fromStdString(device.id));
+        if (!selectedId.empty() && selectedId == device.id) {
+            selectedIndex = index;
+        }
+    }
+
+    m_systemAudioDeviceCombo->setEnabled(true);
+    m_systemAudioDeviceCombo->setCurrentIndex(selectedIndex);
+    m_systemAudioCapture->selectOutputDevice(
+        m_systemAudioDeviceCombo->currentData().toString().toStdString());
+    if (m_systemAudioErrorLabel) {
+        m_systemAudioErrorLabel->clear();
+    }
+}
+
 void MainWindow::refreshMicrophoneRuntimeUi()
 {
     if (!m_microphoneLevelBar) {
@@ -1111,13 +1233,14 @@ void MainWindow::refreshMicrophoneRuntimeUi()
 
     if (m_microphoneTestButton) {
         m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
-        m_microphoneTestButton->setEnabled((!sessionActive() && !m_microphoneCompareActive) || m_microphoneTestActive);
+        m_microphoneTestButton->setEnabled((!sessionActive() && !m_microphoneCompareActive && !m_systemAudioTestActive) || m_microphoneTestActive);
     }
 
     if (m_compareMicrophoneDevicesButton) {
         m_compareMicrophoneDevicesButton->setText(m_microphoneCompareActive ? "Stop Compare" : "Compare Devices");
         m_compareMicrophoneDevicesButton->setEnabled((!sessionActive()
                 && !m_microphoneTestActive
+                && !m_systemAudioTestActive
                 && isRealMicrophoneMode()
                 && m_microphoneDeviceCombo
                 && m_microphoneDeviceCombo->count() > 0
@@ -1171,14 +1294,74 @@ void MainWindow::refreshMicrophoneRuntimeUi()
     refreshStatus();
 }
 
+void MainWindow::refreshSystemAudioRuntimeUi()
+{
+    if (!m_systemAudioLevelBar || !m_systemAudioCapture) {
+        return;
+    }
+
+    const auto diagnostics = m_systemAudioCapture->diagnostics();
+    const bool systemAudioActive = diagnostics.captureActive;
+    const int level = static_cast<int>(std::clamp(diagnostics.smoothedLevel, 0.0, 1.0) * 100.0);
+    m_systemAudioLevelBar->setValue(level);
+    m_systemAudioLevelBar->setFormat(systemAudioActive
+            ? QString("System audio: %1% | RMS %2 | Peak %3 | %4")
+                .arg(QString::number(diagnostics.smoothedLevel * 100.0, 'f', 2),
+                     dbfsText(diagnostics.lastBufferDbfs),
+                     dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(diagnostics.lastBufferPeak)),
+                     levelQualityText(diagnostics.lastBufferRms, diagnostics.lastBufferPeak))
+            : "System audio: OFF");
+
+    if (m_systemAudioDiagnosticsLabel) {
+        m_systemAudioDiagnosticsLabel->setText(systemAudioDiagnosticsText());
+    }
+
+    if (m_systemAudioTestButton) {
+        m_systemAudioTestButton->setText(m_systemAudioTestActive ? "Stop System Audio Test" : "Start System Audio Test");
+        m_systemAudioTestButton->setEnabled((!sessionActive() && !m_microphoneTestActive && !m_microphoneCompareActive) || m_systemAudioTestActive);
+    }
+
+    if (m_systemAudioErrorLabel) {
+        const QString error = QString::fromStdString(diagnostics.lastError);
+        m_systemAudioErrorLabel->setText(error);
+    }
+
+    if (systemAudioActive != m_reportedSystemAudioActive) {
+        recordSystemAudioPrivacyEvent(
+            systemAudioActive ? "system_audio_enabled" : "system_audio_disabled",
+            systemAudioActive ? "System audio loopback capture started." : "System audio loopback capture stopped.");
+        m_reportedSystemAudioActive = systemAudioActive;
+        m_lastReportedSystemAudioFailure.clear();
+
+        const bool microphoneActive = activeMicrophoneCapture().diagnostics().captureActive;
+        if (systemAudioActive && !microphoneActive) {
+            setCompanionAnimation(local_jarvis::companion::AnimationState::Listening);
+            if (m_captionBubbleWindow) {
+                m_captionBubbleWindow->setMicrophonePlaceholderText(
+                    "System audio active. Transcription will be added in the next phase.");
+            }
+        } else if (!systemAudioActive && !microphoneActive && m_captionBubbleWindow) {
+            m_captionBubbleWindow->setMicrophonePlaceholderText("");
+            applyCompanionState();
+        }
+    }
+
+    const bool wantsSystemAudio = m_privacyManager.captureStatus().systemAudioEnabled && m_systemAudioTestActive;
+    const std::string lastError = diagnostics.lastError;
+    if (!systemAudioActive && wantsSystemAudio && !lastError.empty() && lastError != m_lastReportedSystemAudioFailure) {
+        recordSystemAudioPrivacyEvent("system_audio_capture_failed", lastError);
+        m_lastReportedSystemAudioFailure = lastError;
+    }
+}
+
 void MainWindow::handleAudioModeChanged(int)
 {
-    if (sessionActive() || m_microphoneTestActive || m_microphoneCompareActive) {
+    if (sessionActive() || m_microphoneTestActive || m_microphoneCompareActive || m_systemAudioTestActive) {
         const bool activeBackendIsReal = m_realMicrophoneCapture
             && m_activeMicrophoneCapture == m_realMicrophoneCapture.get();
         const QSignalBlocker blocker(m_audioModeCombo);
         m_audioModeCombo->setCurrentIndex(activeBackendIsReal ? 1 : 0);
-        QMessageBox::information(this, "Microphone Active", "Stop the current session, microphone test, or device compare before changing audio capture mode.");
+        QMessageBox::information(this, "Capture Active", "Stop the current session or diagnostic capture before changing audio capture mode.");
         return;
     }
 
@@ -1212,6 +1395,20 @@ void MainWindow::handleMicrophoneDeviceChanged(int index)
     activeMicrophoneCapture().selectInputDevice(deviceId);
     if (m_storage.isOpen()) {
         m_storage.setSetting("audio.input_device_id", deviceId);
+    }
+}
+
+void MainWindow::handleSystemAudioDeviceChanged(int index)
+{
+    if (index < 0 || !m_systemAudioDeviceCombo || !m_systemAudioDeviceCombo->isEnabled() || !m_systemAudioCapture) {
+        return;
+    }
+
+    const std::string deviceId = m_systemAudioDeviceCombo->itemData(index).toString().toStdString();
+    m_systemAudioCapture->selectOutputDevice(deviceId);
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("system_audio.selected_device_id", deviceId);
+        m_storage.setSetting("system_audio.last_selected_device_name", m_systemAudioDeviceCombo->currentText().toStdString());
     }
 }
 
@@ -1303,6 +1500,84 @@ void MainWindow::finishMicrophoneTest()
     recordMicrophonePrivacyEvent("microphone_test_stopped", "Microphone level diagnostic test completed after 10 seconds.");
     refreshStatus();
     refreshMicrophoneRuntimeUi();
+}
+
+void MainWindow::startSystemAudioTest()
+{
+    if (!m_systemAudioCapture) {
+        return;
+    }
+    if (sessionActive()) {
+        QMessageBox::information(this, "Session Active", "Stop the current session before running the standalone system audio test.");
+        return;
+    }
+    if (m_microphoneTestActive || m_microphoneCompareActive) {
+        QMessageBox::information(this, "Microphone Diagnostic Active", "Stop the current microphone diagnostic before running the system audio test.");
+        return;
+    }
+
+    m_systemAudioTestPreviousSystemAudioRequested = m_privacyManager.captureStatus().systemAudioEnabled;
+    m_privacyManager.setSystemAudioEnabled(true);
+    {
+        const QSignalBlocker blocker(m_systemAudioCaptureCheckBox);
+        m_systemAudioCaptureCheckBox->setChecked(true);
+    }
+
+    recordSystemAudioPrivacyEvent("system_audio_test_started", "User started a system audio loopback diagnostic test. Only scalar diagnostics are kept.");
+    if (!m_systemAudioCapture->startSystemAudioCapture()) {
+        const std::string error = m_systemAudioCapture->lastError().empty()
+            ? "System audio test could not start."
+            : m_systemAudioCapture->lastError();
+        recordSystemAudioPrivacyEvent("system_audio_capture_failed", error);
+        m_privacyManager.setSystemAudioEnabled(m_systemAudioTestPreviousSystemAudioRequested);
+        if (m_storage.isOpen()) {
+            m_storage.setSetting("system_audio.enabled", m_systemAudioTestPreviousSystemAudioRequested ? "true" : "false");
+        }
+        refreshStatus();
+        refreshSystemAudioRuntimeUi();
+        return;
+    }
+
+    m_systemAudioTestActive = true;
+    m_systemAudioTestTimer.start(m_systemAudioTestDurationMs);
+    appendLifecycleEvent(QString("System audio diagnostic test running for %1 seconds.").arg(m_systemAudioTestDurationMs / 1000));
+    refreshStatus();
+    refreshSystemAudioRuntimeUi();
+}
+
+void MainWindow::stopSystemAudioTest()
+{
+    if (!m_systemAudioTestActive || !m_systemAudioCapture) {
+        return;
+    }
+
+    m_systemAudioTestTimer.stop();
+    m_systemAudioCapture->stopSystemAudioCapture();
+    m_systemAudioTestActive = false;
+    m_privacyManager.setSystemAudioEnabled(m_systemAudioTestPreviousSystemAudioRequested);
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("system_audio.enabled", m_systemAudioTestPreviousSystemAudioRequested ? "true" : "false");
+    }
+    recordSystemAudioPrivacyEvent("system_audio_test_stopped", "User stopped the system audio loopback diagnostic test.");
+    refreshStatus();
+    refreshSystemAudioRuntimeUi();
+}
+
+void MainWindow::finishSystemAudioTest()
+{
+    if (!m_systemAudioTestActive || !m_systemAudioCapture) {
+        return;
+    }
+
+    m_systemAudioCapture->stopSystemAudioCapture();
+    m_systemAudioTestActive = false;
+    m_privacyManager.setSystemAudioEnabled(m_systemAudioTestPreviousSystemAudioRequested);
+    if (m_storage.isOpen()) {
+        m_storage.setSetting("system_audio.enabled", m_systemAudioTestPreviousSystemAudioRequested ? "true" : "false");
+    }
+    recordSystemAudioPrivacyEvent("system_audio_test_stopped", "System audio loopback diagnostic test completed after its configured duration.");
+    refreshStatus();
+    refreshSystemAudioRuntimeUi();
 }
 
 void MainWindow::startMicrophoneDeviceCompare()
@@ -1919,6 +2194,29 @@ void MainWindow::stopMicrophoneForShutdown()
     }
 }
 
+void MainWindow::stopSystemAudioForShutdown()
+{
+    if (!m_systemAudioCapture) {
+        return;
+    }
+
+    const bool wasActive = m_systemAudioCapture->isSystemAudioActive();
+    const bool wasTestActive = m_systemAudioTestActive;
+    m_systemAudioTestTimer.stop();
+    m_systemAudioCapture->stopSystemAudioCapture();
+    m_systemAudioTestActive = false;
+    if (wasTestActive) {
+        recordSystemAudioPrivacyEvent(
+            "system_audio_test_stopped",
+            "System audio loopback diagnostic test stopped during app shutdown.");
+    }
+    if (wasActive) {
+        recordSystemAudioPrivacyEvent(
+            "system_audio_disabled",
+            "System audio loopback capture stopped during app shutdown.");
+    }
+}
+
 void MainWindow::recordMicrophonePrivacyEvent(const std::string &eventType, const std::string &details)
 {
     if (!m_storage.isOpen()) {
@@ -1932,6 +2230,22 @@ void MainWindow::recordMicrophonePrivacyEvent(const std::string &eventType, cons
 
     m_storage.addPrivacyEvent(local_jarvis::storage::PrivacyEventInput {
         .sessionId = sessionId,
+        .eventType = eventType,
+        .details = details
+    });
+
+    appendLifecycleEvent(QString("%1: %2")
+        .arg(QString::fromStdString(eventType),
+             QString::fromStdString(details)));
+}
+
+void MainWindow::recordSystemAudioPrivacyEvent(const std::string &eventType, const std::string &details)
+{
+    if (!m_storage.isOpen()) {
+        return;
+    }
+
+    m_storage.addPrivacyEvent(local_jarvis::storage::PrivacyEventInput {
         .eventType = eventType,
         .details = details
     });
@@ -2092,6 +2406,93 @@ QString MainWindow::microphoneRecommendationText() const
     return lines.join('\n');
 }
 
+QString MainWindow::systemAudioDiagnosticsText() const
+{
+    if (!m_systemAudioCapture) {
+        return "System audio capture is unavailable.";
+    }
+
+    const auto diagnostics = m_systemAudioCapture->diagnostics();
+    const QString lastCallback = diagnostics.lastCallbackTimeMs > 0
+        ? QDateTime::fromMSecsSinceEpoch(diagnostics.lastCallbackTimeMs, Qt::UTC).toString(Qt::ISODateWithMs)
+        : "never";
+    const QString deviceName = diagnostics.selectedDeviceName.empty()
+        ? (m_systemAudioDeviceCombo ? m_systemAudioDeviceCombo->currentText() : QString("unknown"))
+        : QString::fromStdString(diagnostics.selectedDeviceName);
+    const QString deviceId = diagnostics.selectedDeviceId.empty()
+        ? QString::fromStdString(m_systemAudioCapture->selectedOutputDeviceId())
+        : QString::fromStdString(diagnostics.selectedDeviceId);
+    const QString format = diagnostics.sampleFormat.empty()
+        ? "unknown"
+        : QString::fromStdString(diagnostics.sampleFormat);
+    const QString error = diagnostics.lastError.empty()
+        ? "none"
+        : QString::fromStdString(diagnostics.lastError);
+    const QString selectedUiDevice = m_systemAudioDeviceCombo && m_systemAudioDeviceCombo->count() > 0
+        ? m_systemAudioDeviceCombo->currentText()
+        : "unavailable";
+    const QString quality = levelQualityText(diagnostics.lastBufferRms, diagnostics.lastBufferPeak);
+
+    return QString(
+        "UI selected output: %1\n"
+        "Selected output: %2\n"
+        "Device id: %3\n"
+        "Capture active: %4 | Sample rate: %5 Hz | Channels: %6 | Format: %7\n"
+        "Buffers: %8 | Frames: %9 | Non-zero samples: %10\n"
+        "Last buffer RMS: %11 (%12) | Peak: %13 (%14) | Non-zero: %15 | %16\n"
+        "Smoothed level: %17 | Last callback: %18\n"
+        "Last error: %19\n"
+        "%20")
+        .arg(selectedUiDevice,
+             deviceName,
+             deviceId.isEmpty() ? QString("none") : deviceId,
+             diagnostics.captureActive ? "yes" : "no",
+             QString::number(diagnostics.sampleRate),
+             QString::number(diagnostics.channelCount),
+             format,
+             QString::number(diagnostics.buffersReceived),
+             QString::number(diagnostics.framesReceived),
+             QString::number(diagnostics.nonZeroSamplesObserved),
+             QString::number(diagnostics.lastBufferRms, 'f', 4),
+             dbfsText(diagnostics.lastBufferDbfs),
+             QString::number(diagnostics.lastBufferPeak, 'f', 4),
+             dbfsText(local_jarvis::audio::AudioLevelMeter::amplitudeToDbfs(diagnostics.lastBufferPeak)),
+             percentText(diagnostics.lastBufferNonZeroRatio),
+             quality,
+             QString::number(diagnostics.smoothedLevel, 'f', 4),
+             lastCallback,
+             error,
+             systemAudioDeviceListText());
+}
+
+QString MainWindow::systemAudioDeviceListText() const
+{
+    if (!m_systemAudioDeviceCombo || m_systemAudioDeviceCombo->count() == 0) {
+        return "Available output devices: none";
+    }
+
+    const std::string selectedId = m_systemAudioCapture ? m_systemAudioCapture->selectedOutputDeviceId() : std::string {};
+    QStringList lines;
+    lines << "Available output devices:";
+    for (int index = 0; index < m_systemAudioDeviceCombo->count(); ++index) {
+        const QString id = m_systemAudioDeviceCombo->itemData(index).toString();
+        if (id.isEmpty()) {
+            continue;
+        }
+        QStringList tags;
+        if (!selectedId.empty() && id.toStdString() == selectedId) {
+            tags << "active";
+        }
+        lines << QString("- %1%2")
+            .arg(m_systemAudioDeviceCombo->itemText(index),
+                 tags.isEmpty() ? QString {} : QString(" [%1]").arg(tags.join(", ")));
+    }
+    if (lines.size() == 1) {
+        lines << "- none";
+    }
+    return lines.join('\n');
+}
+
 QString MainWindow::asrBackendText() const
 {
     if (m_asrBackend == local_jarvis::asr::AsrBackend::Whisper
@@ -2222,8 +2623,8 @@ void MainWindow::refreshStatus()
         ? "running"
         : "stopped";
     const QString systemAudioRuntime = m_sessionManager && m_sessionManager->isSystemAudioCaptureActive()
-        ? "running"
-        : "stopped";
+        ? "session running"
+        : (m_systemAudioCapture && m_systemAudioCapture->isSystemAudioActive() ? "test running" : "stopped");
     const double microphoneLevel = std::clamp(microphoneDiagnostics.smoothedLevel, 0.0, 1.0) * 100.0;
     const QString modeText = isRealMicrophoneMode() ? "Real microphone" : "Dummy audio";
     const QString deviceText = m_microphoneDeviceCombo && m_microphoneDeviceCombo->isEnabled()
@@ -2345,7 +2746,7 @@ void MainWindow::refreshStatus()
         m_aiProcessingStatusLabel->setText("AI processing: idle");
     }
 
-    m_startButton->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive && m_sessionManager != nullptr);
+    m_startButton->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive && !m_systemAudioTestActive && m_sessionManager != nullptr);
     m_stopButton->setEnabled(active);
     const bool modelReady = m_setupStatus.modelReady;
     m_processStudyButton->setEnabled(active && modelReady);
@@ -2356,28 +2757,35 @@ void MainWindow::refreshStatus()
         const QSignalBlocker systemAudioBlocker(m_systemAudioCaptureCheckBox);
         m_microphoneCaptureCheckBox->setChecked(status.microphoneEnabled);
         m_systemAudioCaptureCheckBox->setChecked(status.systemAudioEnabled);
-        m_systemAudioCaptureCheckBox->setEnabled(!isRealMicrophoneMode());
+        m_systemAudioCaptureCheckBox->setEnabled(!isRealMicrophoneMode() && !m_systemAudioTestActive);
     }
     if (m_microphoneDiagnosticsLabel) {
         m_microphoneDiagnosticsLabel->setText(microphoneDiagnosticsText());
     }
     if (m_microphoneTestButton) {
         m_microphoneTestButton->setText(m_microphoneTestActive ? "Stop Mic Test" : "Test Mic Level");
-        m_microphoneTestButton->setEnabled((!active && !m_microphoneCompareActive) || m_microphoneTestActive);
+        m_microphoneTestButton->setEnabled((!active && !m_microphoneCompareActive && !m_systemAudioTestActive) || m_microphoneTestActive);
     }
     if (m_compareMicrophoneDevicesButton) {
         m_compareMicrophoneDevicesButton->setText(m_microphoneCompareActive ? "Stop Compare" : "Compare Devices");
-        m_compareMicrophoneDevicesButton->setEnabled((!active && !m_microphoneTestActive && isRealMicrophoneMode()
+        m_compareMicrophoneDevicesButton->setEnabled((!active && !m_microphoneTestActive && !m_systemAudioTestActive && isRealMicrophoneMode()
                 && m_microphoneDeviceCombo && m_microphoneDeviceCombo->count() > 0
                 && !m_microphoneDeviceCombo->itemData(0).toString().isEmpty())
             || m_microphoneCompareActive);
+    }
+    if (m_systemAudioDiagnosticsLabel) {
+        m_systemAudioDiagnosticsLabel->setText(systemAudioDiagnosticsText());
+    }
+    if (m_systemAudioTestButton) {
+        m_systemAudioTestButton->setText(m_systemAudioTestActive ? "Stop System Audio Test" : "Start System Audio Test");
+        m_systemAudioTestButton->setEnabled((!active && !m_microphoneTestActive && !m_microphoneCompareActive) || m_systemAudioTestActive);
     }
     if (m_asrEnabledCheckBox) {
         const QSignalBlocker asrBlocker(m_asrEnabledCheckBox);
         m_asrEnabledCheckBox->setChecked(m_asrEnabled.load());
     }
     if (m_audioModeCombo) {
-        m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive);
+        m_audioModeCombo->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive && !m_systemAudioTestActive);
     }
     if (m_microphoneDeviceCombo) {
         m_microphoneDeviceCombo->setEnabled(!active
@@ -2388,6 +2796,15 @@ void MainWindow::refreshStatus()
     }
     if (m_refreshMicrophoneDevicesButton) {
         m_refreshMicrophoneDevicesButton->setEnabled(!active && !m_microphoneTestActive && !m_microphoneCompareActive);
+    }
+    if (m_systemAudioDeviceCombo) {
+        m_systemAudioDeviceCombo->setEnabled(!active
+            && !m_systemAudioTestActive
+            && m_systemAudioDeviceCombo->count() > 0
+            && !m_systemAudioDeviceCombo->itemData(0).toString().isEmpty());
+    }
+    if (m_refreshSystemAudioDevicesButton) {
+        m_refreshSystemAudioDevicesButton->setEnabled(!active && !m_systemAudioTestActive);
     }
 }
 

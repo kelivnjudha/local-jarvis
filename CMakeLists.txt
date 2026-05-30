@@ -52,6 +52,7 @@ set(LOCAL_JARVIS_CORE_SOURCES
     core/audio/AudioSpeechDetector.cpp
     core/audio/DummyAudioCapture.cpp
     core/audio/MicrophoneCapture.cpp
+    core/audio/SystemAudioCapture.cpp
     core/asr/AudioChunkBuffer.cpp
     core/asr/WhisperAudioConversion.cpp
     core/screen/ScreenCapture.cpp
@@ -83,6 +84,7 @@ if(WIN32)
     list(APPEND LOCAL_JARVIS_CORE_SOURCES
         core/audio/AudioCapture_win.cpp
         core/audio/MicrophoneCapture_Windows.cpp
+        core/audio/SystemAudioCapture_Windows.cpp
         core/screen/ScreenCapture_win.cpp
     )
 elseif(APPLE)
