@@ -18,6 +18,7 @@ public:
     [[nodiscard]] virtual std::string selectedOutputDeviceId() const = 0;
     virtual bool startSystemAudioCapture() = 0;
     virtual void stopSystemAudioCapture() = 0;
+    virtual void setPcmAudioCallback(PcmAudioCallback callback) = 0;
     [[nodiscard]] virtual bool isSystemAudioActive() const = 0;
     [[nodiscard]] virtual double currentOutputLevel() const = 0;
     [[nodiscard]] virtual SystemAudioDiagnostics diagnostics() const = 0;

@@ -5,6 +5,7 @@
 #endif
 
 #include <mutex>
+#include <utility>
 
 namespace local_jarvis::audio {
 namespace {
@@ -55,6 +56,12 @@ public:
         m_diagnostics.smoothedLevel = 0.0;
     }
 
+    void setPcmAudioCallback(PcmAudioCallback callback) override
+    {
+        std::lock_guard lock(m_mutex);
+        m_pcmAudioCallback = std::move(callback);
+    }
+
     bool isSystemAudioActive() const override
     {
         return false;
@@ -88,6 +95,7 @@ private:
     std::string m_selectedDeviceId;
     std::string m_lastError;
     SystemAudioDiagnostics m_diagnostics;
+    PcmAudioCallback m_pcmAudioCallback;
 };
 #endif
 

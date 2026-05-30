@@ -14,6 +14,29 @@
 
 namespace local_jarvis::asr {
 
+struct AsrSourceStats {
+    std::uint64_t chunksQueued = 0;
+    std::uint64_t chunksProcessed = 0;
+    std::size_t pendingChunks = 0;
+    std::uint64_t chunksSkippedSilence = 0;
+    std::uint64_t chunksSkippedTooQuiet = 0;
+    std::uint64_t blankOutputs = 0;
+    std::uint64_t lastChunkId = 0;
+    std::int64_t lastChunkDurationMs = 0;
+    int lastChunkSampleRate = 0;
+    int lastChunkChannels = 0;
+    std::size_t lastChunkInputSamples = 0;
+    std::size_t lastWhisperSampleCount = 0;
+    double lastChunkRms = 0.0;
+    double lastChunkPeak = 0.0;
+    double lastChunkDbfs = -120.0;
+    double lastChunkNonZeroRatio = 0.0;
+    bool lastChunkTreatedAsSilent = false;
+    std::string lastSpeechDetectionState = "none";
+    std::string lastStatusMessage;
+    std::string lastTranscriptText;
+};
+
 struct AsrWorkerStats {
     AsrStatus status = AsrStatus::Disabled;
     std::uint64_t chunksQueued = 0;
@@ -40,6 +63,9 @@ struct AsrWorkerStats {
     std::string lastStatusMessage;
     std::string lastTranscriptText;
     std::string lastError;
+    AsrAudioSource lastAudioSource = AsrAudioSource::Microphone;
+    AsrSourceStats microphone;
+    AsrSourceStats systemAudio;
 };
 
 class AsrWorker {

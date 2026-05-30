@@ -28,11 +28,12 @@ AsrResult StubAsrEngine::transcribeChunk(const AsrInputChunk &chunk)
             .sessionId = chunk.sessionId,
             .startMs = chunk.startMs,
             .endMs = chunk.endMs,
-            .speaker = "Microphone",
+            .speaker = captionSpeakerForSource(chunk.audioSource),
             .text = text,
             .detectedLanguage = "en",
             .confidence = 1.0,
-            .isFinal = true
+            .isFinal = true,
+            .audioSource = chunk.audioSource
         },
         .text = text,
         .message = "ASR stub produced a deterministic local transcript segment."

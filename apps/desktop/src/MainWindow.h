@@ -76,6 +76,8 @@ private:
     void startSystemAudioTest();
     void stopSystemAudioTest();
     void finishSystemAudioTest();
+    void setSystemAudioAsrEnabled(bool enabled);
+    void startSystemAudioCaptureForSession();
     void startMicrophoneDeviceCompare();
     void stopMicrophoneDeviceCompare();
     void advanceMicrophoneDeviceCompare();
@@ -94,7 +96,10 @@ private:
     void stopAsrPipeline();
     void installPcmAudioCallback();
     void clearPcmAudioCallback();
+    void installSystemAudioPcmCallback();
+    void clearSystemAudioPcmCallback();
     void handlePcmAudioFrame(const local_jarvis::audio::PcmAudioFrame &frame);
+    void handleSystemAudioPcmFrame(const local_jarvis::audio::PcmAudioFrame &frame);
     void handleAsrTranscriptSegment(const local_jarvis::asr::AsrTranscriptSegment &segment);
     void stopMicrophoneForShutdown();
     void stopSystemAudioForShutdown();
@@ -111,7 +116,7 @@ private:
     [[nodiscard]] QString whisperStatusText() const;
     [[nodiscard]] local_jarvis::asr::AsrBackend selectedAsrBackend() const;
     [[nodiscard]] local_jarvis::asr::AsrEngineConfig currentAsrConfig() const;
-    [[nodiscard]] std::string currentAsrTranscriptSource() const;
+    [[nodiscard]] std::string currentAsrTranscriptSource(local_jarvis::asr::AsrAudioSource source) const;
     [[nodiscard]] bool sessionActive() const;
     [[nodiscard]] bool isRealMicrophoneMode() const;
     [[nodiscard]] local_jarvis::audio::MicrophoneCapture &activeMicrophoneCapture();
@@ -164,6 +169,10 @@ private:
     QProgressBar *m_systemAudioLevelBar = nullptr;
     QLabel *m_systemAudioDiagnosticsLabel = nullptr;
     QLabel *m_systemAudioErrorLabel = nullptr;
+    QCheckBox *m_systemAudioAsrCheckBox = nullptr;
+    QLabel *m_systemAudioAsrStatusLabel = nullptr;
+    QLabel *m_systemAudioAsrStatsLabel = nullptr;
+    QLabel *m_systemAudioLastSegmentLabel = nullptr;
     QComboBox *m_asrBackendCombo = nullptr;
     QCheckBox *m_asrEnabledCheckBox = nullptr;
     QLineEdit *m_whisperModelPathEdit = nullptr;
@@ -229,6 +238,7 @@ private:
     local_jarvis::audio::MicrophoneCapture *m_activeMicrophoneCapture = nullptr;
     std::unique_ptr<local_jarvis::asr::AsrWorker> m_asrWorker;
     local_jarvis::asr::AudioChunkBuffer m_audioChunkBuffer;
+    local_jarvis::asr::AudioChunkBuffer m_systemAudioChunkBuffer;
     local_jarvis::ai::OllamaClient m_ollamaClient;
     local_jarvis::setup::SystemCheck m_systemCheck;
     local_jarvis::ai::ModelManager m_modelManager;
@@ -255,6 +265,7 @@ private:
     std::atomic_bool m_setupWorkerActive { false };
     std::atomic_bool m_modelPullWorkerActive { false };
     std::atomic_bool m_asrEnabled { false };
+    std::atomic_bool m_systemAudioAsrEnabled { false };
     local_jarvis::asr::AsrBackend m_asrBackend = local_jarvis::asr::AsrBackend::Stub;
     std::string m_whisperModelPath;
     std::string m_whisperLanguage = "auto";

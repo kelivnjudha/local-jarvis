@@ -53,6 +53,11 @@ AsrInputChunk whisperChunkFromSamples(const AsrInputChunk &chunk, std::vector<fl
     return adjusted;
 }
 
+AsrSourceStats &sourceStatsFor(AsrWorkerStats &stats, AsrAudioSource source)
+{
+    return source == AsrAudioSource::SystemAudio ? stats.systemAudio : stats.microphone;
+}
+
 } // namespace
 
 AsrWorker::AsrWorker(std::unique_ptr<AsrEngine> engine)
@@ -150,6 +155,7 @@ void AsrWorker::enqueueChunk(const AsrInputChunk &chunk)
         }
         m_queue.push_back(chunk);
         ++m_chunksQueued;
+        ++sourceStatsFor(m_lastDiagnostics, chunk.audioSource).chunksQueued;
         m_status = AsrStatus::Processing;
     }
     m_condition.notify_one();
@@ -187,33 +193,18 @@ void AsrWorker::setStatusCallback(StatusCallback callback)
 AsrWorkerStats AsrWorker::stats() const
 {
     std::lock_guard lock(m_mutex);
-    return AsrWorkerStats {
-        .status = m_status,
-        .chunksQueued = m_chunksQueued,
-        .chunksProcessed = m_chunksProcessed,
-        .pendingChunks = m_queue.size(),
-        .lastChunkId = m_lastDiagnostics.lastChunkId,
-        .lastChunkDurationMs = m_lastDiagnostics.lastChunkDurationMs,
-        .lastChunkSampleRate = m_lastDiagnostics.lastChunkSampleRate,
-        .lastChunkChannels = m_lastDiagnostics.lastChunkChannels,
-        .lastChunkInputSamples = m_lastDiagnostics.lastChunkInputSamples,
-        .lastWhisperSampleCount = m_lastDiagnostics.lastWhisperSampleCount,
-        .lastChunkRms = m_lastDiagnostics.lastChunkRms,
-        .lastChunkPeak = m_lastDiagnostics.lastChunkPeak,
-        .lastChunkDbfs = m_lastDiagnostics.lastChunkDbfs,
-        .lastChunkNonZeroRatio = m_lastDiagnostics.lastChunkNonZeroRatio,
-        .lastChunkTreatedAsSilent = m_lastDiagnostics.lastChunkTreatedAsSilent,
-        .lastSpeechDetectionState = m_lastDiagnostics.lastSpeechDetectionState,
-        .chunksSkippedSilence = m_lastDiagnostics.chunksSkippedSilence,
-        .chunksSkippedTooQuiet = m_lastDiagnostics.chunksSkippedTooQuiet,
-        .blankOutputs = m_lastDiagnostics.blankOutputs,
-        .preprocessingEnabled = m_lastDiagnostics.preprocessingEnabled,
-        .lastPreprocessingGainDb = m_lastDiagnostics.lastPreprocessingGainDb,
-        .lastPreprocessingLimiterEngaged = m_lastDiagnostics.lastPreprocessingLimiterEngaged,
-        .lastStatusMessage = m_lastDiagnostics.lastStatusMessage,
-        .lastTranscriptText = m_lastDiagnostics.lastTranscriptText,
-        .lastError = m_lastError
-    };
+    AsrWorkerStats stats = m_lastDiagnostics;
+    stats.status = m_status;
+    stats.chunksQueued = m_chunksQueued;
+    stats.chunksProcessed = m_chunksProcessed;
+    stats.pendingChunks = m_queue.size();
+    stats.lastError = m_lastError;
+    stats.microphone.pendingChunks = 0;
+    stats.systemAudio.pendingChunks = 0;
+    for (const auto &chunk : m_queue) {
+        ++sourceStatsFor(stats, chunk.audioSource).pendingChunks;
+    }
+    return stats;
 }
 
 std::string AsrWorker::engineName() const
@@ -286,6 +277,7 @@ void AsrWorker::workerLoop()
         });
         {
             std::lock_guard lock(m_mutex);
+            m_lastDiagnostics.lastAudioSource = chunk.audioSource;
             m_lastDiagnostics.lastChunkId = chunk.chunkId;
             m_lastDiagnostics.lastChunkDurationMs = chunkDurationMs;
             m_lastDiagnostics.lastChunkSampleRate = chunk.sampleRate;
@@ -301,6 +293,19 @@ void AsrWorker::workerLoop()
             m_lastDiagnostics.preprocessingEnabled = whisperBackend && config.preprocessing.enabled;
             m_lastDiagnostics.lastPreprocessingGainDb = 0.0;
             m_lastDiagnostics.lastPreprocessingLimiterEngaged = false;
+            auto &sourceStats = sourceStatsFor(m_lastDiagnostics, chunk.audioSource);
+            sourceStats.lastChunkId = chunk.chunkId;
+            sourceStats.lastChunkDurationMs = chunkDurationMs;
+            sourceStats.lastChunkSampleRate = chunk.sampleRate;
+            sourceStats.lastChunkChannels = chunk.channels;
+            sourceStats.lastChunkInputSamples = chunk.samples.size();
+            sourceStats.lastWhisperSampleCount = whisperSamples.size();
+            sourceStats.lastChunkRms = chunkRms;
+            sourceStats.lastChunkPeak = chunkPeak;
+            sourceStats.lastChunkDbfs = chunkDbfs;
+            sourceStats.lastChunkNonZeroRatio = chunkNonZeroRatio;
+            sourceStats.lastChunkTreatedAsSilent = chunkSilent;
+            sourceStats.lastSpeechDetectionState = audio::displayName(speechState);
         }
 
         if (whisperBackend && speechState == audio::SpeechDetectionState::Silence) {
@@ -310,6 +315,10 @@ void AsrWorker::workerLoop()
                 ++m_lastDiagnostics.chunksSkippedSilence;
                 m_status = m_queue.empty() ? AsrStatus::Listening : AsrStatus::Processing;
                 m_lastDiagnostics.lastTranscriptText = "Skipped silent chunk.";
+                auto &sourceStats = sourceStatsFor(m_lastDiagnostics, chunk.audioSource);
+                ++sourceStats.chunksProcessed;
+                ++sourceStats.chunksSkippedSilence;
+                sourceStats.lastTranscriptText = m_lastDiagnostics.lastTranscriptText;
             }
             publishStatus(stats().status, "Waiting for speech...");
             continue;
@@ -325,6 +334,10 @@ void AsrWorker::workerLoop()
                 ++m_lastDiagnostics.chunksSkippedTooQuiet;
                 m_status = m_queue.empty() ? AsrStatus::Listening : AsrStatus::Processing;
                 m_lastDiagnostics.lastTranscriptText = "Skipped too-quiet chunk.";
+                auto &sourceStats = sourceStatsFor(m_lastDiagnostics, chunk.audioSource);
+                ++sourceStats.chunksProcessed;
+                ++sourceStats.chunksSkippedTooQuiet;
+                sourceStats.lastTranscriptText = m_lastDiagnostics.lastTranscriptText;
             }
             publishStatus(stats().status, "Input too quiet for transcription");
             continue;
@@ -348,6 +361,12 @@ void AsrWorker::workerLoop()
 
         publishStatus(AsrStatus::Processing, whisperBackend ? "Processing speech..." : "ASR processing chunk.");
         const auto result = m_engine->transcribeChunk(engineChunk);
+        AsrTranscriptSegment resultSegment = result.segment;
+        resultSegment.audioSource = chunk.audioSource;
+        if (resultSegment.speaker.empty()
+            || (chunk.audioSource == AsrAudioSource::SystemAudio && resultSegment.speaker == "Microphone")) {
+            resultSegment.speaker = captionSpeakerForSource(chunk.audioSource);
+        }
 
         SegmentCallback segmentCallback;
         if (result.ok) {
@@ -355,12 +374,17 @@ void AsrWorker::workerLoop()
             {
                 std::lock_guard lock(m_mutex);
                 ++m_chunksProcessed;
+                auto &sourceStats = sourceStatsFor(m_lastDiagnostics, chunk.audioSource);
+                ++sourceStats.chunksProcessed;
                 m_lastError.clear();
                 m_status = m_queue.empty() ? AsrStatus::Listening : AsrStatus::Processing;
                 m_lastDiagnostics.lastTranscriptText = result.text.empty() ? result.message : result.text;
+                sourceStats.lastTranscriptText = m_lastDiagnostics.lastTranscriptText;
                 if (blankOutput) {
                     ++m_lastDiagnostics.blankOutputs;
                     m_lastDiagnostics.lastTranscriptText = result.text.empty() ? "Blank ASR output suppressed." : "Blank ASR output suppressed: " + result.text;
+                    ++sourceStats.blankOutputs;
+                    sourceStats.lastTranscriptText = m_lastDiagnostics.lastTranscriptText;
                 } else {
                     segmentCallback = m_segmentCallback;
                 }
@@ -370,7 +394,7 @@ void AsrWorker::workerLoop()
                 continue;
             }
             if (segmentCallback) {
-                segmentCallback(result.segment);
+                segmentCallback(resultSegment);
             }
             publishStatus(stats().status, "ASR chunk processed.");
         } else {
@@ -381,6 +405,9 @@ void AsrWorker::workerLoop()
                 m_lastError = error;
                 m_status = AsrStatus::Error;
                 m_lastDiagnostics.lastTranscriptText = result.text.empty() ? error : result.text;
+                auto &sourceStats = sourceStatsFor(m_lastDiagnostics, chunk.audioSource);
+                ++sourceStats.chunksProcessed;
+                sourceStats.lastTranscriptText = m_lastDiagnostics.lastTranscriptText;
             }
             publishStatus(AsrStatus::Error, error);
         }
@@ -400,6 +427,7 @@ void AsrWorker::publishStatus(AsrStatus status, const std::string &message)
         }
         callback = m_statusCallback;
         m_lastDiagnostics.lastStatusMessage = message;
+        sourceStatsFor(m_lastDiagnostics, m_lastDiagnostics.lastAudioSource).lastStatusMessage = message;
     }
     if (callback) {
         callback(status, message);

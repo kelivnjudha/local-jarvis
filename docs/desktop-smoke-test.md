@@ -11,7 +11,7 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm the Session tab renders after database readiness. Model readiness should not be required for raw session work.
 - Confirm the Microphone Input section renders with audio mode, device selector, refresh button, level meter, and error/status text.
 - Confirm the Microphone Input section shows diagnostics: selected device name/id, active state, sample rate, channel count, sample format, buffer/frame counters, non-zero samples, RMS, smoothed level, callback time, and last error.
-- Confirm the System Audio Output section renders with output device selector, refresh button, Start System Audio Test button, level meter, diagnostics, quality label, callback time, and last error.
+- Confirm the System Audio Output section renders with output device selector, refresh button, Start System Audio Test button, System Audio ASR toggle, level meter, diagnostics, quality label, callback time, ASR counters, last system transcript, and last error.
 - Confirm the Local ASR section renders with backend, toggle, status, queued/processed chunk counts, last transcript, and last error.
 - Confirm the Local ASR section renders audio quality diagnostics: speech detector state, skipped silence count, skipped too-quiet count, blank output count, duplicate suppression count, preprocessing state, and last preprocessing gain.
 - Confirm the Local ASR section renders Whisper settings: model path, Browse Model, language, translate toggle, max threads, and Whisper status.
@@ -153,14 +153,39 @@ Use this checklist after a successful `windows-msvc-desktop-debug` build. It ver
 - Confirm system audio loopback starts only after that explicit click and no session is created.
 - Play a local test tone, video, music, or browser audio through the selected output device.
 - Confirm the system audio level meter and diagnostics show buffers, frames, callback time, RMS, peak, non-zero percentage, dBFS, and quality label.
-- Confirm the caption bubble may show "System audio active. Transcription will be added in the next phase." when microphone capture is not active.
+- Confirm the caption bubble may show "System audio active. Transcription is off." when microphone capture is not active and System Audio ASR is off.
 - Confirm the companion can switch to Listening while system audio capture is active.
 - Confirm the system audio test stops after its configured duration, or click Stop System Audio Test and confirm it stops cleanly.
 - Start a system audio test, then close the app while capture is active.
 - Confirm the app exits cleanly.
 - Confirm no raw audio files are created in the repo, build directories, or app data.
 - Confirm local privacy events are written for system audio test start, stop, and capture failure when applicable.
-- Confirm system audio is not fed into ASR and no transcript row is created from system audio in Phase 3E-A.
+- Confirm the standalone system audio test does not create a session or transcript row.
+
+## System Audio ASR
+
+- Confirm System Audio ASR is OFF by default unless a developer previously enabled it.
+- Start a session.
+- Select the active playback output device.
+- Enable the System audio capture checkbox explicitly.
+- Enable System Audio ASR explicitly.
+- With Stub backend selected, play local audio through the selected output device.
+- Confirm system audio diagnostics show non-zero playback levels.
+- Confirm System Audio ASR counters update for queued/handled chunks.
+- Confirm the caption bubble shows stub transcript text with a `System:` speaker label when speaker labels are enabled.
+- Confirm the Transcript panel shows the same stub system transcript segment.
+- Confirm SQLite stores a transcript segment with source `system_audio_asr_stub`.
+- Confirm skipped silence, too-quiet chunks, and blank output counters are visible and do not flicker blank captions.
+- Disable System Audio ASR.
+- Confirm system audio capture can remain controlled independently.
+- Stop the session.
+- Confirm system audio ASR and loopback capture stop cleanly.
+- Enable microphone ASR separately.
+- Confirm microphone ASR still stores `microphone_asr_stub` or `microphone_asr_whisper` and uses the `Mic:` caption label.
+- Close the app while system audio capture or ASR is active.
+- Confirm the app exits cleanly.
+- Confirm no raw audio files are created in the repo, build directories, or app data.
+- Confirm local privacy events are written for `system_audio_asr_enabled`, `system_audio_asr_disabled`, `system_audio_asr_chunk_processed`, skipped chunks, blank output, and error cases when applicable.
 
 ## Local ASR Scaffold
 
@@ -206,6 +231,7 @@ Only run this section when Local Jarvis is built with `LOCAL_JARVIS_ENABLE_WHISP
 - Confirm `[BLANK_AUDIO]`, empty, or whitespace-only ASR output is not shown as a normal caption.
 - Confirm the Transcript panel shows the same text.
 - Confirm SQLite stores a transcript segment with source `microphone_asr_whisper`.
+- If System Audio ASR is enabled with Whisper, confirm playback speech either creates source `system_audio_asr_whisper` or reports a clear missing-model/unavailable/too-quiet status.
 - Confirm SQLite does not store `[BLANK_AUDIO]`, empty, whitespace-only, or short-window duplicate transcript rows by default.
 - If ASR preprocessing is enabled through settings, confirm the UI shows the last applied gain and limiter state, and no audio file is written.
 - Stop the session.
@@ -218,7 +244,8 @@ Only run this section when Local Jarvis is built with `LOCAL_JARVIS_ENABLE_WHISP
 
 - Confirm no overlay UI appears.
 - Confirm real microphone capture starts only after explicit user action.
-- Confirm no system audio or screen capture starts.
+- Confirm no system audio, microphone, or ASR path starts without explicit user action.
+- Confirm no screen capture starts.
 - Confirm no OCR path runs.
 - Confirm no cloud ASR path runs.
 - Confirm all capture status remains visible in the Session tab.

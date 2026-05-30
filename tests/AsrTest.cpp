@@ -196,6 +196,20 @@ int main()
             "AudioChunkBuffer should mix interleaved stereo to mono chunks.")) {
         return EXIT_FAILURE;
     }
+    buffer.reset("session-system");
+    buffer.configure(1000, 0, 2000);
+    emitted = buffer.appendPcm(
+        "session-system",
+        0,
+        1000,
+        1,
+        samples(1000),
+        false,
+        local_jarvis::asr::AsrAudioSource::SystemAudio);
+    if (!expect(emitted.size() == 1 && emitted.front().audioSource == local_jarvis::asr::AsrAudioSource::SystemAudio,
+            "AudioChunkBuffer should preserve system audio source metadata.")) {
+        return EXIT_FAILURE;
+    }
 
     buffer.reset("session-silence");
     buffer.configure(1000, 100, 1500);
@@ -234,10 +248,31 @@ int main()
     if (!expect(secondResult.ok && secondResult.text == "Stub transcript chunk 2", "Stub ASR should advance deterministic chunk text.")) {
         return EXIT_FAILURE;
     }
+    const auto systemResult = engine.transcribeChunk(AsrInputChunk {
+        .chunkId = 3,
+        .sessionId = "session-a",
+        .startMs = 2000,
+        .endMs = 3000,
+        .samples = samples(1000),
+        .isFinalChunk = true,
+        .audioSource = local_jarvis::asr::AsrAudioSource::SystemAudio
+    });
+    if (!expect(systemResult.ok
+            && systemResult.segment.audioSource == local_jarvis::asr::AsrAudioSource::SystemAudio
+            && systemResult.segment.speaker == "System"
+            && local_jarvis::asr::transcriptSourceFor(local_jarvis::asr::AsrBackend::Stub, systemResult.segment.audioSource) == "system_audio_asr_stub",
+            "System audio ASR should map to the system_audio_asr_stub transcript source.")) {
+        return EXIT_FAILURE;
+    }
 
     auto captionSegment = local_jarvis::asr::toCaptionSegment(firstResult.segment);
-    if (!expect(captionSegment.originalText == firstResult.text && captionSegment.speaker == "Microphone",
+    if (!expect(captionSegment.originalText == firstResult.text && captionSegment.speaker == "Mic",
             "ASR transcript segments should convert to caption segments.")) {
+        return EXIT_FAILURE;
+    }
+    const auto systemCaptionSegment = local_jarvis::asr::toCaptionSegment(systemResult.segment);
+    if (!expect(systemCaptionSegment.speaker == "System",
+            "System audio transcript segments should convert to System caption labels.")) {
         return EXIT_FAILURE;
     }
 
@@ -287,7 +322,8 @@ int main()
     if (!expect(workerStatsBeforeStop.lastChunkRms > 0.19
             && workerStatsBeforeStop.lastChunkPeak > 0.19
             && !workerStatsBeforeStop.lastChunkTreatedAsSilent
-            && workerStatsBeforeStop.lastTranscriptText == "Stub transcript chunk 7",
+            && workerStatsBeforeStop.lastTranscriptText == "Stub transcript chunk 7"
+            && workerStatsBeforeStop.microphone.chunksProcessed == 1,
             "AsrWorker should expose RMS, peak, silence, and last text diagnostics.")) {
         return EXIT_FAILURE;
     }
@@ -312,6 +348,18 @@ int main()
     });
     if (!expect(transcriptId.has_value() && storage.countTranscriptSegmentsForSession(*sessionId) == 1,
             "Final ASR transcript segments should store in transcript_segments.")) {
+        return EXIT_FAILURE;
+    }
+    const auto systemTranscriptId = storage.addTranscriptSegment(TranscriptSegmentInput {
+        .sessionId = *sessionId,
+        .startMs = systemResult.segment.startMs,
+        .endMs = systemResult.segment.endMs,
+        .speaker = systemResult.segment.speaker,
+        .text = systemResult.segment.text,
+        .source = "system_audio_asr_stub"
+    });
+    if (!expect(systemTranscriptId.has_value() && storage.countTranscriptSegmentsForSession(*sessionId) == 2,
+            "System audio ASR transcript segments should store with system_audio_asr_stub source.")) {
         return EXIT_FAILURE;
     }
     if (!expect(storage.setSetting("asr.backend", "whisper")
@@ -458,10 +506,13 @@ int main()
             .startMs = 0,
             .endMs = 3000,
             .samples = samples(48000, 0.12F),
-            .isFinalChunk = true
+            .isFinalChunk = true,
+            .audioSource = local_jarvis::asr::AsrAudioSource::SystemAudio
         });
-        if (!expect(waitForStats(blankWorker, [](const auto &stats) { return stats.blankOutputs == 1; }),
-                "[BLANK_AUDIO] should be counted and suppressed.")) {
+        if (!expect(waitForStats(blankWorker, [](const auto &stats) {
+                return stats.blankOutputs == 1 && stats.systemAudio.blankOutputs == 1;
+            }),
+                "[BLANK_AUDIO] should be counted and suppressed for system audio.")) {
             return EXIT_FAILURE;
         }
         {

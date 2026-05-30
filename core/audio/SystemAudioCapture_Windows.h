@@ -23,6 +23,7 @@ public:
     [[nodiscard]] std::string selectedOutputDeviceId() const override;
     bool startSystemAudioCapture() override;
     void stopSystemAudioCapture() override;
+    void setPcmAudioCallback(PcmAudioCallback callback) override;
     [[nodiscard]] bool isSystemAudioActive() const override;
     [[nodiscard]] double currentOutputLevel() const override;
     [[nodiscard]] SystemAudioDiagnostics diagnostics() const override;
@@ -42,6 +43,7 @@ private:
     SystemAudioDiagnostics m_diagnostics;
     std::string m_selectedDeviceId;
     std::string m_lastError;
+    PcmAudioCallback m_pcmAudioCallback;
     bool m_systemAudioActive = false;
     bool m_stopRequested = false;
     bool m_startCompleted = false;

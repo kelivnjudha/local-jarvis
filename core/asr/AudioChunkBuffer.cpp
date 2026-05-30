@@ -51,7 +51,8 @@ std::vector<AsrInputChunk> AudioChunkBuffer::appendPcm(
     int sampleRate,
     int channels,
     std::span<const float> samples,
-    bool isFinalChunk)
+    bool isFinalChunk,
+    AsrAudioSource audioSource)
 {
     if (sampleRate <= 0) {
         return {};
@@ -82,7 +83,7 @@ std::vector<AsrInputChunk> AudioChunkBuffer::appendPcm(
         return {};
     }
 
-    auto chunks = emitReadyChunksLocked(sessionId, isFinalChunk);
+    auto chunks = emitReadyChunksLocked(sessionId, isFinalChunk, audioSource);
     enforceBoundLocked();
     return chunks;
 }
@@ -90,7 +91,7 @@ std::vector<AsrInputChunk> AudioChunkBuffer::appendPcm(
 std::vector<AsrInputChunk> AudioChunkBuffer::flush(const std::string &sessionId)
 {
     std::lock_guard lock(m_mutex);
-    return emitReadyChunksLocked(sessionId, true);
+    return emitReadyChunksLocked(sessionId, true, AsrAudioSource::Microphone);
 }
 
 std::size_t AudioChunkBuffer::bufferedSampleCount() const
@@ -105,7 +106,10 @@ std::uint64_t AudioChunkBuffer::chunksEmitted() const
     return m_chunksEmitted;
 }
 
-std::vector<AsrInputChunk> AudioChunkBuffer::emitReadyChunksLocked(const std::string &sessionId, bool flushRemainder)
+std::vector<AsrInputChunk> AudioChunkBuffer::emitReadyChunksLocked(
+    const std::string &sessionId,
+    bool flushRemainder,
+    AsrAudioSource audioSource)
 {
     std::vector<AsrInputChunk> chunks;
     if (m_sampleRate <= 0 || m_samples.empty()) {
@@ -127,7 +131,8 @@ std::vector<AsrInputChunk> AudioChunkBuffer::emitReadyChunksLocked(const std::st
             .sampleRate = m_sampleRate,
             .channels = 1,
             .samples = std::move(chunkSamples),
-            .isFinalChunk = false
+            .isFinalChunk = false,
+            .audioSource = audioSource
         });
         ++m_chunksEmitted;
 
@@ -148,7 +153,8 @@ std::vector<AsrInputChunk> AudioChunkBuffer::emitReadyChunksLocked(const std::st
             .sampleRate = m_sampleRate,
             .channels = 1,
             .samples = std::move(m_samples),
-            .isFinalChunk = true
+            .isFinalChunk = true,
+            .audioSource = audioSource
         });
         ++m_chunksEmitted;
         m_samples.clear();

@@ -22,7 +22,8 @@ public:
         int sampleRate,
         int channels,
         std::span<const float> samples,
-        bool isFinalChunk = false);
+        bool isFinalChunk = false,
+        AsrAudioSource audioSource = AsrAudioSource::Microphone);
 
     [[nodiscard]] std::vector<AsrInputChunk> flush(const std::string &sessionId);
 
@@ -30,7 +31,10 @@ public:
     [[nodiscard]] std::uint64_t chunksEmitted() const;
 
 private:
-    [[nodiscard]] std::vector<AsrInputChunk> emitReadyChunksLocked(const std::string &sessionId, bool flushRemainder);
+    [[nodiscard]] std::vector<AsrInputChunk> emitReadyChunksLocked(
+        const std::string &sessionId,
+        bool flushRemainder,
+        AsrAudioSource audioSource);
     [[nodiscard]] std::int64_t framesToMs(std::size_t frameCount) const;
     void enforceBoundLocked();
 

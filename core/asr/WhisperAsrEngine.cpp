@@ -232,11 +232,12 @@ AsrResult WhisperAsrEngine::transcribeChunk(const AsrInputChunk &chunk)
             .sessionId = chunk.sessionId,
             .startMs = chunk.startMs,
             .endMs = chunk.endMs,
-            .speaker = "Microphone",
+            .speaker = captionSpeakerForSource(chunk.audioSource),
             .text = text,
             .detectedLanguage = languageCode,
             .confidence = confidence,
-            .isFinal = true
+            .isFinal = true,
+            .audioSource = chunk.audioSource
         },
         .text = text,
         .message = "Whisper transcript segment created."

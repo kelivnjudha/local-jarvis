@@ -1,6 +1,6 @@
 # Local ASR
 
-Local Jarvis has a local-only ASR pipeline that accepts in-memory microphone PCM chunks, processes them off the UI thread, feeds captions, and stores final transcript text during active user-started sessions.
+Local Jarvis has a local-only ASR pipeline that accepts in-memory microphone or system-audio PCM chunks, processes them off the UI thread, feeds captions, and stores final transcript text during active user-started sessions.
 
 ## Default Build: Stub
 
@@ -17,7 +17,7 @@ In this build:
 - Stub remains the default ASR backend.
 - Whisper is shown as unavailable/disabled in the desktop UI.
 - No Whisper headers, libraries, model files, downloads, or network services are required.
-- Stub transcript segments use source `microphone_asr_stub`.
+- Stub transcript segments use source `microphone_asr_stub` for microphone audio and `system_audio_asr_stub` for system audio.
 
 The stub backend emits deterministic development text such as:
 
@@ -61,7 +61,8 @@ Do not commit model files to this repo.
 ## Runtime Behavior
 
 - Microphone capture still starts only after explicit user action.
-- ASR is controlled separately from the microphone toggle.
+- System audio loopback still starts only after explicit user action.
+- Microphone ASR and System Audio ASR are controlled separately from the capture toggles.
 - Whisper chunks are classified before transcription as silence, too quiet, maybe speech, likely speech, or clipping risk.
 - Clearly silent chunks are skipped before Whisper. Too-quiet chunks are skipped by default and shown as a visible warning instead of creating transcript rows.
 - Empty, whitespace-only, and `[BLANK_AUDIO]` ASR outputs are suppressed by default and counted in diagnostics.
@@ -70,9 +71,9 @@ Do not commit model files to this repo.
 - 48 kHz and other sample rates are converted to 16 kHz with a simple MVP linear resampler.
 - Raw audio is not written to disk.
 - Transcript text is stored only while an explicit session is active.
-- Standalone microphone level tests do not store transcripts.
-- System audio loopback diagnostics from Phase 3E-A are not fed into ASR yet.
-- Whisper transcript segments use source `microphone_asr_whisper`.
+- Standalone microphone and system audio level tests do not store transcripts.
+- Whisper transcript segments use source `microphone_asr_whisper` for microphone audio and `system_audio_asr_whisper` for system audio.
+- Caption speaker labels distinguish sources as `Mic:` and `System:` when speaker labels are enabled.
 
 ## Audio And Caption Quality Settings
 
@@ -104,7 +105,14 @@ Audio and ASR optimization paths write local diagnostic events only. They do not
 - `asr_blank_output`
 - `asr_duplicate_suppressed`
 - `asr_preprocessing_applied`
+- `system_audio_asr_enabled`
+- `system_audio_asr_disabled`
+- `system_audio_asr_chunk_processed`
+- `system_audio_asr_chunk_skipped_silence`
+- `system_audio_asr_chunk_skipped_too_quiet`
+- `system_audio_asr_blank_output`
+- `system_audio_asr_error`
 
 ## Privacy Boundary
 
-ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, system audio capture, screen capture, OCR, or background transcription. Audio is processed in memory and dropped; only transcript text from active sessions is stored in SQLite.
+ASR is local-only. Local Jarvis does not use cloud ASR, background uploads, hidden capture, screen capture, OCR, or background transcription. Microphone and system audio are processed in memory and dropped; only transcript text from active sessions is stored in SQLite.

@@ -23,6 +23,11 @@ enum class AsrBackend {
     Whisper
 };
 
+enum class AsrAudioSource {
+    Microphone,
+    SystemAudio
+};
+
 struct AsrInputChunk {
     std::uint64_t chunkId = 0;
     std::string sessionId;
@@ -32,6 +37,7 @@ struct AsrInputChunk {
     int channels = 1;
     std::vector<float> samples;
     bool isFinalChunk = false;
+    AsrAudioSource audioSource = AsrAudioSource::Microphone;
 };
 
 struct AsrTranscriptSegment {
@@ -44,6 +50,7 @@ struct AsrTranscriptSegment {
     std::string detectedLanguage = "en";
     double confidence = 0.0;
     bool isFinal = true;
+    AsrAudioSource audioSource = AsrAudioSource::Microphone;
 };
 
 struct PcmAudioBuffer {
@@ -85,6 +92,51 @@ struct AsrEngineConfig {
         return "whisper";
     }
     return "stub";
+}
+
+[[nodiscard]] inline std::string toString(AsrAudioSource source)
+{
+    switch (source) {
+    case AsrAudioSource::Microphone:
+        return "microphone";
+    case AsrAudioSource::SystemAudio:
+        return "system_audio";
+    }
+    return "microphone";
+}
+
+[[nodiscard]] inline std::string displayName(AsrAudioSource source)
+{
+    switch (source) {
+    case AsrAudioSource::Microphone:
+        return "Microphone";
+    case AsrAudioSource::SystemAudio:
+        return "System audio";
+    }
+    return "Microphone";
+}
+
+[[nodiscard]] inline std::string captionSpeakerForSource(AsrAudioSource source)
+{
+    switch (source) {
+    case AsrAudioSource::Microphone:
+        return "Mic";
+    case AsrAudioSource::SystemAudio:
+        return "System";
+    }
+    return "Mic";
+}
+
+[[nodiscard]] inline std::string transcriptSourceFor(AsrBackend backend, AsrAudioSource source)
+{
+    if (source == AsrAudioSource::SystemAudio) {
+        return backend == AsrBackend::Whisper
+            ? "system_audio_asr_whisper"
+            : "system_audio_asr_stub";
+    }
+    return backend == AsrBackend::Whisper
+        ? "microphone_asr_whisper"
+        : "microphone_asr_stub";
 }
 
 [[nodiscard]] inline AsrBackend asrBackendFromString(const std::string &value)
@@ -129,7 +181,7 @@ struct AsrEngineConfig {
 {
     return caption::CaptionSegment {
         .id = segment.id,
-        .speaker = segment.speaker,
+        .speaker = segment.speaker.empty() ? captionSpeakerForSource(segment.audioSource) : segment.speaker,
         .originalText = segment.text,
         .translatedText = segment.detectedLanguage == "en" ? segment.text : std::string {},
         .summaryText = segment.text,
