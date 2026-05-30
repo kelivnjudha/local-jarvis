@@ -154,7 +154,9 @@ bool CompanionManager::loadSettings()
     m_state.currentMode = companionModeFromString(settingString(kMode, toString(defaults.currentMode)));
     m_state.anchorX = settingInt(kAnchorX, defaults.anchorX);
     m_state.anchorY = settingInt(kAnchorY, defaults.anchorY);
-    m_state.companionLocked = settingBool(kLocked, defaults.companionLocked);
+    (void)settingBool(kLocked, defaults.companionLocked);
+    m_state.companionLocked = false;
+    saveBool(kLocked, false);
     m_state.captionFontSize = clampInt(settingInt(kCaptionFontSize, defaults.captionFontSize), 12, 48);
     m_state.captionOpacity = clampDouble(settingDouble(kCaptionOpacity, defaults.captionOpacity), 0.2, 1.0);
     m_state.captionMaxLines = clampInt(settingInt(kCaptionMaxLines, defaults.captionMaxLines), 1, 5);

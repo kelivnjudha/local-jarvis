@@ -60,19 +60,23 @@ CompanionWindow::CompanionWindow(
 void CompanionWindow::applyState()
 {
     const auto &state = m_companionManager.state();
-    const int scaledWidth = static_cast<int>(kBaseWindowWidth * state.companionScale);
-    const int scaledHeight = static_cast<int>(kBaseWindowHeight * state.companionScale);
-    setFixedSize(scaledWidth, scaledHeight);
+    if (!m_dragging) {
+        const int scaledWidth = static_cast<int>(kBaseWindowWidth * state.companionScale);
+        const int scaledHeight = static_cast<int>(kBaseWindowHeight * state.companionScale);
+        setFixedSize(scaledWidth, scaledHeight);
+    }
     if (state.animationEnabled) {
         const auto metadata = local_jarvis::companion::metadataForAnimation(state.currentAnimationState);
         m_animationTimer.start(qMax(60, metadata.transitionDurationMs / 3));
     } else {
         m_animationTimer.stop();
     }
-    const QPoint clampedPosition = clampTopLeftToDesktop(QPoint(state.anchorX, state.anchorY), size());
-    move(clampedPosition);
-    if (clampedPosition.x() != state.anchorX || clampedPosition.y() != state.anchorY) {
-        m_companionManager.setAnchorPosition(clampedPosition.x(), clampedPosition.y());
+    if (!m_dragging) {
+        const QPoint clampedPosition = clampTopLeftToDesktop(QPoint(state.anchorX, state.anchorY), size());
+        move(clampedPosition);
+        if (clampedPosition.x() != state.anchorX || clampedPosition.y() != state.anchorY) {
+            m_companionManager.setAnchorPosition(clampedPosition.x(), clampedPosition.y());
+        }
     }
     applyWindowFlags(true);
     update();
